@@ -332,7 +332,7 @@ public:
 
   T **data() { return reinterpret_cast<T **>(wrapped.data()); }
 
-  const jlongArray get_jArray() const { return wrapped.get_jArray(); }
+  jlongArray get_jArray() const { return wrapped.get_jArray(); }
 
   jlongArray get_jArray() { return wrapped.get_jArray(); }
 
@@ -492,7 +492,7 @@ public:
     return true;
   }
 
-  const jstring get_jstring() const { return orig; }
+  jstring get_jstring() const { return orig; }
 
   ~native_jstring() {
     if (orig != NULL && cstr != NULL) {
