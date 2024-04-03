@@ -18,51 +18,14 @@
 
 package ai.rapids.cudf;
 
-import ai.rapids.cudf.HostColumnVector.BasicType;
-import ai.rapids.cudf.HostColumnVector.Builder;
-import ai.rapids.cudf.HostColumnVector.DataType;
-import ai.rapids.cudf.HostColumnVector.ListType;
-import ai.rapids.cudf.HostColumnVector.StructData;
-import ai.rapids.cudf.HostColumnVector.StructType;
-
-import ai.rapids.cudf.ast.BinaryOperation;
-import ai.rapids.cudf.ast.BinaryOperator;
-import ai.rapids.cudf.ast.ColumnReference;
-import ai.rapids.cudf.ast.CompiledExpression;
-import ai.rapids.cudf.ast.TableReference;
-import com.google.common.base.Charsets;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.Path;
-import org.apache.parquet.hadoop.ParquetFileReader;
-import org.apache.parquet.hadoop.util.HadoopInputFile;
-import org.apache.parquet.schema.GroupType;
-import org.apache.parquet.schema.MessageType;
-import org.apache.parquet.schema.OriginalType;
-import org.junit.jupiter.api.Tag;
-import org.junit.jupiter.api.Test;
-
-import java.io.*;
-import java.math.BigDecimal;
-import java.math.BigInteger;
-import java.math.RoundingMode;
-import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.util.*;
-import java.util.function.Function;
-import java.util.stream.Collectors;
-
 import static ai.rapids.cudf.AssertUtils.assertColumnsAreEqual;
 import static ai.rapids.cudf.AssertUtils.assertPartialColumnsAreEqual;
 import static ai.rapids.cudf.AssertUtils.assertPartialTablesAreEqual;
 import static ai.rapids.cudf.AssertUtils.assertTableTypes;
 import static ai.rapids.cudf.AssertUtils.assertTablesAreEqual;
+import static ai.rapids.cudf.ColumnWriterOptions.listBuilder;
 import static ai.rapids.cudf.ColumnWriterOptions.mapColumn;
-import static ai.rapids.cudf.ParquetWriterOptions.listBuilder;
-import static ai.rapids.cudf.ParquetWriterOptions.structBuilder;
-import static ai.rapids.cudf.Table.TestBuilder;
+import static ai.rapids.cudf.ColumnWriterOptions.structBuilder;
 import static ai.rapids.cudf.Table.removeNullMasksIfNeeded;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -72,6 +35,55 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.math.RoundingMode;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
+import org.apache.parquet.hadoop.ParquetFileReader;
+import org.apache.parquet.hadoop.util.HadoopInputFile;
+import org.apache.parquet.schema.GroupType;
+import org.apache.parquet.schema.MessageType;
+import org.apache.parquet.schema.OriginalType;
+import org.junit.jupiter.api.Test;
+
+import com.google.common.base.Charsets;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+
+import ai.rapids.cudf.HostColumnVector.BasicType;
+import ai.rapids.cudf.HostColumnVector.Builder;
+import ai.rapids.cudf.HostColumnVector.DataType;
+import ai.rapids.cudf.HostColumnVector.ListType;
+import ai.rapids.cudf.HostColumnVector.StructData;
+import ai.rapids.cudf.HostColumnVector.StructType;
+import ai.rapids.cudf.Table.TestBuilder;
+import ai.rapids.cudf.ast.BinaryOperation;
+import ai.rapids.cudf.ast.BinaryOperator;
+import ai.rapids.cudf.ast.ColumnReference;
+import ai.rapids.cudf.ast.CompiledExpression;
+import ai.rapids.cudf.ast.TableReference;
 
 public class TableTest extends CudfTestBase {
 
@@ -4404,6 +4416,93 @@ public class TableTest extends CudfTestBase {
         }
       }
     }
+  }
+
+  private static final char[] HEX_ARRAY = "0123456789ABCDEF".toCharArray();
+
+  public static String bytesToHex(byte[] bytes) {
+    char[] hexChars = new char[bytes.length * 2];
+    for (int j = 0; j < bytes.length; j++) {
+      int v = bytes[j] & 0xFF;
+      hexChars[j * 2] = HEX_ARRAY[v >>> 4];
+      hexChars[j * 2 + 1] = HEX_ARRAY[v & 0x0F];
+    }
+    return new String(hexChars);
+  }
+
+  @Test
+  void testSerializationSimpleColumnNative() throws IOException {
+    long[] data = new long[10000000];
+    for (int i = 0; i < data.length; ++i) {
+      data[i] = data.length - i;
+    }
+    PinnedMemoryPool.initialize(8L*1024*1024*1024);
+    int[] sliceMap = new int[data.length];
+    int numParts = 200;
+    int rowsPerPart = data.length / numParts;
+    for (int i = 0; i < sliceMap.length; ++i) {
+      sliceMap[i] = i % numParts;
+    }
+
+    try (ColumnVector cv = ColumnVector.fromUnsignedLongs(data);
+        Table t = new Table(cv);
+        ColumnVector partitionMap = ColumnVector.fromInts(sliceMap);
+        PartitionedTable pt = t.partition(partitionMap, numParts)) {
+        int[] parts  = pt.getPartitions();
+        long serializer = Table.makeNativeJCudfSerializer(pt.getTable().getNativeView());
+
+      ByteBuffer bb = ByteBuffer.allocateDirect(34 + (data.length * 8));
+      for (int i = 0; i < parts.length; i++) {
+        bb.clear();
+        int rowOffset = parts[i];
+        long sink = Table.makeSink(bb);
+        long written = 0;
+        try (NvtxRange n = new NvtxRange("native serialize", NvtxColor.GREEN)) {
+          written = Table.writeToSink(serializer, sink, rowOffset, rowsPerPart);
+        }
+        //byte[] buff = new byte[(int) written];
+        //bb.get(buff);
+
+        //ByteArrayInputStream bais = new ByteArrayInputStream(buff);
+        //JCudfSerialization.TableAndRowCountPair read = JCudfSerialization.readTableFrom(bais);
+        //assertPartialTablesAreEqual(
+        //  pt.getTable(), rowOffset, rowsPerPart, read.getTable(), true, true);
+        Table.destroySink(sink);
+      }
+      Table.destroyNativeJCudfSerializer(serializer);
+    }
+
+
+
+    try (ColumnVector cv = ColumnVector.fromUnsignedLongs(data);
+        Table t = new Table(cv);
+        ColumnVector partitionMap = ColumnVector.fromInts(sliceMap);
+        PartitionedTable pt = t.partition(partitionMap, numParts)) {
+      Table newTable = pt.getTable();
+      ColumnVector pc = newTable.getColumn(0);
+      try ( HostColumnVector hcv = pc.copyToHost()) {
+        int[] parts  = pt.getPartitions();
+        ByteArrayOutputStream os = new ByteArrayOutputStream(34 + (data.length * 8));
+
+        for (int i = 0; i < parts.length; i++) {
+          os.reset();
+          int rowOffset = parts[i];
+          try (NvtxRange n = new NvtxRange("java serialize", NvtxColor.DARK_GREEN)) {
+            JCudfSerialization.writeToStream(
+              new HostColumnVector[]{hcv}, 
+              os, 
+              rowOffset, 
+              rowsPerPart);
+            //ByteArrayInputStream bais = new ByteArrayInputStream(os.toByteArray());
+            //JCudfSerialization.TableAndRowCountPair read =
+            //JCudfSerialization.readTableFrom(bais);
+            //assertTablesAreEqual(t, read.getTable());
+          }
+        }
+      }
+    }
+
+    PinnedMemoryPool.shutdown();
   }
 
   @Test

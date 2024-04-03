@@ -53,7 +53,6 @@ class jcudf_serializer {
   std::unique_ptr<uint8_t> header;
   std::size_t header_size;
   std::vector<host_col_data> host_col_datas;
-  uint64_t _row_offset, _num_rows;
 
   // TODO: do we need this
   uint64_t get_serialized_data_len(
@@ -87,11 +86,9 @@ class jcudf_serializer {
     uint64_t row_offset, 
     uint64_t num_rows);
 public:
-  jcudf_serializer(
-    cudf::table_view const& table, 
-    uint64_t row_offset, uint64_t num_rows);
+  jcudf_serializer(cudf::table_view const& table);
 
   ~jcudf_serializer();
 
-  std::size_t write_data(jcudf_serializer_sink& sink);
+  std::size_t write_data(jcudf_serializer_sink& sink, uint64_t row_offset, uint64_t num_rows);
 };

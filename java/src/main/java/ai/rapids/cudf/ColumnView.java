@@ -5135,7 +5135,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
           }
           // If a strings column is all null values there is no data buffer allocated
           if (data != null) {
-            hostDataBuffer = hostMemoryAllocator.allocate(data.length);
+            hostDataBuffer = hostMemoryAllocator.allocate(data.length, true);
             hostDataBuffer.copyFromDeviceBuffer(data);
           }
           HostColumnVector ret = new HostColumnVector(type, rows, Optional.of(nullCount),

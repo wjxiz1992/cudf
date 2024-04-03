@@ -193,14 +193,7 @@ uint64_t get_raw_string_data_size(
   return end_it - begin_it;
 }
 
-jcudf_serializer::jcudf_serializer(
-  cudf::table_view const& table, 
-  // TODO: set members with these
-  uint64_t row_offset, 
-  uint64_t num_rows): 
-    _row_offset(row_offset), 
-    _num_rows(num_rows) {
-
+jcudf_serializer::jcudf_serializer(cudf::table_view const& table) {
   // header size for this table
   header_size = 4 + 2 + 4 + 4 + 8; // table header
   
@@ -226,8 +219,6 @@ jcudf_serializer::jcudf_serializer(
     });
   }
 
-  header.reset(new uint8_t[header_size]);
-  write_header(table.num_columns(), row_offset, num_rows);
   // we should be able to destroy table after this
 }
 
@@ -417,15 +408,19 @@ std::size_t jcudf_serializer::write_header(
   return offset;
 }
 
-std::size_t jcudf_serializer::write_data(jcudf_serializer_sink& sink) {
+std::size_t jcudf_serializer::write_data(
+    jcudf_serializer_sink& sink, uint64_t row_offset, uint64_t num_rows) {
   // write header
+  header.reset(new uint8_t[header_size]);
+  write_header(host_col_datas.size(), row_offset, num_rows);
+
   auto sink_start = sink.bytes_written();
   sink.write(header.get(), header_size);
 
   // loop through columns
   for (auto const& col : host_col_datas) {
     // emplace back?
-    write_column(sink, col, _row_offset, _num_rows);
+    write_column(sink, col, row_offset, num_rows);
   }
 
   auto bytes_written = sink.bytes_written() - sink_start;

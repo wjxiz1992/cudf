@@ -17,6 +17,7 @@
 #include <cudf/utilities/error.hpp>
 #include <rmm/device_buffer.hpp>
 
+#undef CUDF_JNI_ENABLE_PROFILING
 #ifdef CUDF_JNI_ENABLE_PROFILING
 #include <cuda_profiler_api.h>
 #endif

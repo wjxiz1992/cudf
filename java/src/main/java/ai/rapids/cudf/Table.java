@@ -179,6 +179,11 @@ public final class Table implements AutoCloseable {
   /////////////////////////////////////////////////////////////////////////////
   // NATIVE APIs
   /////////////////////////////////////////////////////////////////////////////
+  public static native long makeNativeJCudfSerializer(long tableViewHandle);
+  public static native void destroyNativeJCudfSerializer(long serializerHandle);
+  public static native long makeSink(ByteBuffer bb);
+  public static native void destroySink(long sinkHandle);
+  public static native long writeToSink(long serializerHandle, long sinkHandle, long rowOffset, long numRows);
 
   private static native long[] removeNullMasksIfNeeded(long tableView) throws CudfException;
 

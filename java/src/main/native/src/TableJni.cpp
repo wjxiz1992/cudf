@@ -54,6 +54,7 @@
 #include "jni_compiled_expr.hpp"
 #include "jni_utils.hpp"
 #include "jni_writer_data_sink.hpp"
+#include "jcudf_serializer.hpp"
 
 namespace cudf {
 namespace jni {
@@ -3822,4 +3823,35 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_sample(JNIEnv *env, jclas
   }
   CATCH_STD(env, 0);
 }
+
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Table_makeNativeJCudfSerializer(
+  JNIEnv *env, jclass, jlong tableViewHandle) {
+  return reinterpret_cast<long>(
+    new jcudf_serializer(*reinterpret_cast<cudf::table_view*>(tableViewHandle)));
+}
+
+JNIEXPORT void JNICALL Java_ai_rapids_cudf_Table_destroyNativeJCudfSerializer(
+  JNIEnv *env, jclass, jlong serializerHandle) {
+  delete reinterpret_cast<jcudf_serializer*>(serializerHandle);
+}
+
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Table_makeSink(
+  JNIEnv *env, jclass, jobject bb) {
+  uint8_t * buffer = reinterpret_cast<uint8_t*>(env->GetDirectBufferAddress(bb));
+  //uint8_t * buffer = new uint8_t[10*1024*1024]; // large buffer to test things out
+  return reinterpret_cast<long>(new jcudf_serializer_sink(buffer));
+}
+
+JNIEXPORT void JNICALL Java_ai_rapids_cudf_Table_destroySink(
+  JNIEnv *env, jclass, jlong sinkHandle) {
+  delete reinterpret_cast<jcudf_serializer_sink*>(sinkHandle);
+}
+
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Table_writeToSink(
+  JNIEnv *env, jclass, jlong serializerHandle, jlong sinkHandle, jlong rowOffset, jlong numRows) {
+  auto sink = reinterpret_cast<jcudf_serializer_sink*>(sinkHandle);
+  return reinterpret_cast<jcudf_serializer*>(serializerHandle)->write_data(
+    *sink, rowOffset, numRows);
+}
+
 } // extern "C"

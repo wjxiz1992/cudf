@@ -39,7 +39,7 @@ package ai.rapids.cudf;
  * "b" is enclosed by "a").
  */
 public class NvtxRange implements AutoCloseable {
-  private static final boolean isEnabled = Boolean.getBoolean("ai.rapids.cudf.nvtx.enabled");
+  private static final boolean isEnabled = true; //Boolean.getBoolean("ai.rapids.cudf.nvtx.enabled");
 
   static {
     if (isEnabled) {
