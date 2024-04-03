@@ -66,6 +66,7 @@ import org.apache.parquet.hadoop.util.HadoopInputFile;
 import org.apache.parquet.schema.GroupType;
 import org.apache.parquet.schema.MessageType;
 import org.apache.parquet.schema.OriginalType;
+import org.eclipse.jetty.io.ByteBufferOutputStream;
 import org.junit.jupiter.api.Test;
 
 import com.google.common.base.Charsets;
@@ -84,6 +85,10 @@ import ai.rapids.cudf.ast.BinaryOperator;
 import ai.rapids.cudf.ast.ColumnReference;
 import ai.rapids.cudf.ast.CompiledExpression;
 import ai.rapids.cudf.ast.TableReference;
+import net.jpountz.lz4.LZ4BlockOutputStream;
+import net.jpountz.lz4.LZ4Compressor;
+import net.jpountz.lz4.LZ4Factory;
+import net.jpountz.xxhash.XXHashFactory;
 
 public class TableTest extends CudfTestBase {
 
@@ -4432,6 +4437,9 @@ public class TableTest extends CudfTestBase {
 
   @Test
   void testSerializationSimpleColumnNative() throws IOException {
+    LZ4Factory lz4Factory = LZ4Factory.fastestInstance(); 
+    XXHashFactory xxHashFactory = XXHashFactory.fastestInstance();
+
     long[] data = new long[10000000];
     for (int i = 0; i < data.length; ++i) {
       data[i] = data.length - i;
@@ -4451,7 +4459,8 @@ public class TableTest extends CudfTestBase {
         int[] parts  = pt.getPartitions();
         long serializer = Table.makeNativeJCudfSerializer(pt.getTable().getNativeView());
 
-      ByteBuffer bb = ByteBuffer.allocateDirect(34 + (data.length * 8));
+      ByteBuffer bb = ByteBuffer.allocateDirect(34 + (rowsPerPart * 8));
+      byte[] buff = new byte[34 + (rowsPerPart * 8)];
       for (int i = 0; i < parts.length; i++) {
         bb.clear();
         int rowOffset = parts[i];
@@ -4460,8 +4469,23 @@ public class TableTest extends CudfTestBase {
         try (NvtxRange n = new NvtxRange("native serialize", NvtxColor.GREEN)) {
           written = Table.writeToSink(serializer, sink, rowOffset, rowsPerPart);
         }
-        //byte[] buff = new byte[(int) written];
-        //bb.get(buff);
+
+        ByteArrayOutputStream compressed = new ByteArrayOutputStream();
+        LZ4BlockOutputStream lz4 = new LZ4BlockOutputStream(
+            compressed,
+            32*1024 /* blockSize*/,
+            lz4Factory.fastCompressor(),
+            xxHashFactory.newStreamingHash32(0x9747b28c).asChecksum(),
+            false /* syncFlush */);
+
+        try (NvtxRange g = new NvtxRange("get", NvtxColor.YELLOW)) {
+          bb.get(buff);
+        }
+
+        try (NvtxRange l = new NvtxRange("lz4_write_flush", NvtxColor.RED)) {
+          lz4.write(buff);
+          lz4.flush();
+        }
 
         //ByteArrayInputStream bais = new ByteArrayInputStream(buff);
         //JCudfSerialization.TableAndRowCountPair read = JCudfSerialization.readTableFrom(bais);
@@ -4472,7 +4496,38 @@ public class TableTest extends CudfTestBase {
       Table.destroyNativeJCudfSerializer(serializer);
     }
 
+    try (ColumnVector cv = ColumnVector.fromUnsignedLongs(data);
+        Table t = new Table(cv);
+        ColumnVector partitionMap = ColumnVector.fromInts(sliceMap);
+        PartitionedTable pt = t.partition(partitionMap, numParts)) {
+        int[] parts  = pt.getPartitions();
+        long serializer = Table.makeNativeJCudfSerializer(pt.getTable().getNativeView());
 
+      ByteBuffer bb = ByteBuffer.allocateDirect(34 + (rowsPerPart * 8));
+      ByteBuffer bbc = ByteBuffer.allocateDirect(34 + (rowsPerPart * 8));
+      byte[] buff = new byte[34 + (rowsPerPart * 8)];
+      for (int i = 0; i < parts.length; i++) {
+        bb.clear();
+        bbc.clear();
+        int rowOffset = parts[i];
+        long sink = Table.makeSink(bb);
+        long written = 0;
+        try (NvtxRange n = new NvtxRange("native serialize", NvtxColor.GREEN)) {
+          written = Table.writeToSink(serializer, sink, rowOffset, rowsPerPart);
+        }
+        // compress
+        try (NvtxRange g = new NvtxRange("direct compress", NvtxColor.YELLOW)) {
+          lz4Factory.fastCompressor().compress(bb, bbc);
+        }
+
+        //ByteArrayInputStream bais = new ByteArrayInputStream(buff);
+        //JCudfSerialization.TableAndRowCountPair read = JCudfSerialization.readTableFrom(bais);
+        //assertPartialTablesAreEqual(
+        //  pt.getTable(), rowOffset, rowsPerPart, read.getTable(), true, true);
+        Table.destroySink(sink);
+      }
+      Table.destroyNativeJCudfSerializer(serializer);
+    }
 
     try (ColumnVector cv = ColumnVector.fromUnsignedLongs(data);
         Table t = new Table(cv);
@@ -4482,17 +4537,27 @@ public class TableTest extends CudfTestBase {
       ColumnVector pc = newTable.getColumn(0);
       try ( HostColumnVector hcv = pc.copyToHost()) {
         int[] parts  = pt.getPartitions();
-        ByteArrayOutputStream os = new ByteArrayOutputStream(34 + (data.length * 8));
+        ByteArrayOutputStream os = new ByteArrayOutputStream(34 + (rowsPerPart * 8));
 
         for (int i = 0; i < parts.length; i++) {
           os.reset();
           int rowOffset = parts[i];
           try (NvtxRange n = new NvtxRange("java serialize", NvtxColor.DARK_GREEN)) {
+            ByteArrayOutputStream compressed = new ByteArrayOutputStream();
+            LZ4BlockOutputStream lz4 = new LZ4BlockOutputStream(
+                compressed,
+                32 * 1024 /* blockSize */,
+                lz4Factory.fastCompressor(),
+                xxHashFactory.newStreamingHash32(0x9747b28c).asChecksum(),
+                false /* syncFlush */);
+
             JCudfSerialization.writeToStream(
               new HostColumnVector[]{hcv}, 
-              os, 
+              lz4, 
               rowOffset, 
               rowsPerPart);
+
+            lz4.flush();
             //ByteArrayInputStream bais = new ByteArrayInputStream(os.toByteArray());
             //JCudfSerialization.TableAndRowCountPair read =
             //JCudfSerialization.readTableFrom(bais);
