@@ -1143,6 +1143,17 @@ public class JCudfSerialization {
     return new DataOutputStreamWriter((DataOutputStream) out);
   }
 
+  private static DataWriter writerFrom(OutputStream out, boolean useBufferedStream) {
+    if (!(out instanceof DataOutputStream)) {
+      if (useBufferedStream) {
+        out = new DataOutputStream(new BufferedOutputStream(out));
+      } else {
+        out = new DataOutputStream(out);
+      }
+    }
+    return new DataOutputStreamWriter((DataOutputStream) out);
+  }
+
   private static DataWriter writerFrom(HostMemoryBuffer buffer) {
     return new HostDataWriter(buffer);
   }
@@ -1621,6 +1632,18 @@ public class JCudfSerialization {
     ColumnBufferProvider[] providers = providersFrom(columns, false);
     try {
       DataWriter writer = writerFrom(out);
+      writeSliced(providers, writer, rowOffset, numRows);
+    } finally {
+      closeAll(providers);
+    }
+  }
+
+  public static void writeToStream(HostColumnVector[] columns, OutputStream out, long rowOffset,
+                                   long numRows, boolean useBufferedStream) throws IOException {
+
+    ColumnBufferProvider[] providers = providersFrom(columns, false);
+    try {
+      DataWriter writer = writerFrom(out, useBufferedStream);
       writeSliced(providers, writer, rowOffset, numRows);
     } finally {
       closeAll(providers);

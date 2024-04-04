@@ -4461,6 +4461,11 @@ public class TableTest extends CudfTestBase {
 
       ByteBuffer bb = ByteBuffer.allocateDirect(34 + (rowsPerPart * 8));
       byte[] buff = new byte[34 + (rowsPerPart * 8)];
+
+      int buffLen = 512 * 1024;
+      byte[] lz4Buffer = new byte[buffLen];
+      byte[] lz4CompressedBuffer = 
+        new byte[LZ4BlockOutputStreamWithReuse.HEADER_LENGTH + lz4Factory.fastCompressor().maxCompressedLength(buffLen)];
       for (int i = 0; i < parts.length; i++) {
         bb.clear();
         int rowOffset = parts[i];
@@ -4469,11 +4474,13 @@ public class TableTest extends CudfTestBase {
         try (NvtxRange n = new NvtxRange("native serialize", NvtxColor.GREEN)) {
           written = Table.writeToSink(serializer, sink, rowOffset, rowsPerPart);
         }
-
+        
         ByteArrayOutputStream compressed = new ByteArrayOutputStream();
-        LZ4BlockOutputStream lz4 = new LZ4BlockOutputStream(
+        LZ4BlockOutputStreamWithReuse lz4 = new LZ4BlockOutputStreamWithReuse(
             compressed,
-            32*1024 /* blockSize*/,
+            buffLen,
+            lz4Buffer,
+            lz4CompressedBuffer,
             lz4Factory.fastCompressor(),
             xxHashFactory.newStreamingHash32(0x9747b28c).asChecksum(),
             false /* syncFlush */);
@@ -4529,6 +4536,8 @@ public class TableTest extends CudfTestBase {
       Table.destroyNativeJCudfSerializer(serializer);
     }
 
+
+
     try (ColumnVector cv = ColumnVector.fromUnsignedLongs(data);
         Table t = new Table(cv);
         ColumnVector partitionMap = ColumnVector.fromInts(sliceMap);
@@ -4546,7 +4555,7 @@ public class TableTest extends CudfTestBase {
             ByteArrayOutputStream compressed = new ByteArrayOutputStream();
             LZ4BlockOutputStream lz4 = new LZ4BlockOutputStream(
                 compressed,
-                32 * 1024 /* blockSize */,
+                512* 1024 /* blockSize */,
                 lz4Factory.fastCompressor(),
                 xxHashFactory.newStreamingHash32(0x9747b28c).asChecksum(),
                 false /* syncFlush */);
@@ -4567,6 +4576,89 @@ public class TableTest extends CudfTestBase {
       }
     }
 
+    try (ColumnVector cv = ColumnVector.fromUnsignedLongs(data);
+        Table t = new Table(cv);
+        ColumnVector partitionMap = ColumnVector.fromInts(sliceMap);
+        PartitionedTable pt = t.partition(partitionMap, numParts)) {
+      Table newTable = pt.getTable();
+      ColumnVector pc = newTable.getColumn(0);
+      try ( HostColumnVector hcv = pc.copyToHost()) {
+        int[] parts  = pt.getPartitions();
+        ByteArrayOutputStream os = new ByteArrayOutputStream(34 + (rowsPerPart * 8));
+
+        for (int i = 0; i < parts.length; i++) {
+          os.reset();
+          int rowOffset = parts[i];
+          try (NvtxRange n = new NvtxRange("java serialize not buffered", NvtxColor.DARK_GREEN)) {
+            ByteArrayOutputStream compressed = new ByteArrayOutputStream();
+            LZ4BlockOutputStream lz4 = new LZ4BlockOutputStream(
+                compressed,
+                32 * 1024 /* blockSize */,
+                lz4Factory.fastCompressor(),
+                xxHashFactory.newStreamingHash32(0x9747b28c).asChecksum(),
+                false /* syncFlush */);
+
+            JCudfSerialization.writeToStream(
+              new HostColumnVector[]{hcv}, 
+              lz4, 
+              rowOffset, 
+              rowsPerPart,
+              false);
+
+            lz4.flush();
+            //ByteArrayInputStream bais = new ByteArrayInputStream(os.toByteArray());
+            //JCudfSerialization.TableAndRowCountPair read =
+            //JCudfSerialization.readTableFrom(bais);
+            //assertTablesAreEqual(t, read.getTable());
+          }
+        }
+      }
+    }
+
+    try (ColumnVector cv = ColumnVector.fromUnsignedLongs(data);
+        Table t = new Table(cv);
+        ColumnVector partitionMap = ColumnVector.fromInts(sliceMap);
+        PartitionedTable pt = t.partition(partitionMap, numParts)) {
+      Table newTable = pt.getTable();
+      ColumnVector pc = newTable.getColumn(0);
+      try ( HostColumnVector hcv = pc.copyToHost()) {
+        int[] parts  = pt.getPartitions();
+        ByteArrayOutputStream os = new ByteArrayOutputStream(34 + (rowsPerPart * 8));
+        int buffLen = 512 * 1024;
+        byte[] lz4Buffer = new byte[buffLen];
+        byte[] lz4CompressedBuffer = 
+          new byte[LZ4BlockOutputStreamWithReuse.HEADER_LENGTH + lz4Factory.fastCompressor().maxCompressedLength(buffLen)];
+
+        for (int i = 0; i < parts.length; i++) {
+          os.reset();
+          int rowOffset = parts[i];
+          try (NvtxRange n = new NvtxRange("java serialize not buffered larger lz4 buffer", NvtxColor.DARK_GREEN)) {
+            ByteArrayOutputStream compressed = new ByteArrayOutputStream();
+            LZ4BlockOutputStreamWithReuse lz4 = new LZ4BlockOutputStreamWithReuse(
+                compressed,
+                buffLen,
+                lz4Buffer,
+                lz4CompressedBuffer,
+                lz4Factory.fastCompressor(),
+                xxHashFactory.newStreamingHash32(0x9747b28c).asChecksum(),
+                false /* syncFlush */);
+
+            JCudfSerialization.writeToStream(
+              new HostColumnVector[]{hcv}, 
+              lz4, 
+              rowOffset, 
+              rowsPerPart,
+              false);
+
+            lz4.flush();
+            //ByteArrayInputStream bais = new ByteArrayInputStream(os.toByteArray());
+            //JCudfSerialization.TableAndRowCountPair read =
+            //JCudfSerialization.readTableFrom(bais);
+            //assertTablesAreEqual(t, read.getTable());
+          }
+        }
+      }
+    }
     PinnedMemoryPool.shutdown();
   }
 
