@@ -605,7 +605,7 @@ public class JCudfSerialization {
    * Visible for testing
    */
   static final class DataOutputStreamWriter extends DataWriter {
-    private final byte[] arrayBuffer = new byte[1024 * 128];
+    private final byte[] arrayBuffer = new byte[1024 * 1024];
     private final DataOutputStream dout;
 
     public DataOutputStreamWriter(DataOutputStream dout) {
