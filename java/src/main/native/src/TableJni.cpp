@@ -3870,4 +3870,15 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Table_writeToSink(
     *sink, rowOffset, numRows);
 }
 
+JNIEXPORT void JNICALL Java_ai_rapids_cudf_Table_copyDataDirect(
+  JNIEnv *env, jclass, jlong srcAddress, jbyteArray buff, jlong srcOffset, jlong length) {
+  
+  auto src = reinterpret_cast<uint8_t*>(srcAddress);
+  jbyte* buffer_ptr = env->GetByteArrayElements(buff, NULL);
+
+  memcpy(buffer_ptr, src + srcOffset, length);
+
+  env->ReleaseByteArrayElements(buff, buffer_ptr, 0);
+}
+
 } // extern "C"

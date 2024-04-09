@@ -75,6 +75,11 @@ public class JCudfSerialization {
     }
   }
 
+  public static void copyDataDirect(
+      HostMemoryBuffer src, byte[] buff, long srcOffset, long length) throws IOException {
+    Table.copyDataDirect(src.address, buff, srcOffset, length);
+  }
+
   /**
    * Holds the metadata about a serialized table. If this is being read from a stream
    * isInitialized will return true if the metadata was read correctly from the stream.
@@ -1145,11 +1150,11 @@ public class JCudfSerialization {
 
   private static DataWriter writerFrom(OutputStream out, boolean useBufferedStream) {
     if (!(out instanceof DataOutputStream)) {
-      //if (useBufferedStream) {
-      //  out = new DataOutputStream(new BufferedOutputStream(out));
-      //} else {
+      if (useBufferedStream) {
+        out = new DataOutputStream(new BufferedOutputStream(out));
+      } else {
         out = new DataOutputStream(out);
-      //}
+      }
     }
     return new DataOutputStreamWriter((DataOutputStream) out);
   }
