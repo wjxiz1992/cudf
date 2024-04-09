@@ -179,6 +179,7 @@ public final class Table implements AutoCloseable {
   /////////////////////////////////////////////////////////////////////////////
   // NATIVE APIs
   /////////////////////////////////////////////////////////////////////////////
+  public static native long populateOffsetVector(long srcAddress, long dstAddress, long numRows);
   public static native long makeNativeJCudfSerializer(long tableViewHandle);
   public static native void destroyNativeJCudfSerializer(long serializerHandle);
   public static native long makeSink(ByteBuffer bb);

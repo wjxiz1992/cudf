@@ -1401,20 +1401,17 @@ public class JCudfSerialization {
     if (rowOffset == 0) {
       return copySlicedAndPad(out, column, BufferType.OFFSET, srcOffset, bytesToCopy);
     }
+
     HostMemoryBuffer buff = column.getHostBufferFor(BufferType.OFFSET);
     long startOffset = column.getBufferStartOffset(BufferType.OFFSET) + srcOffset;
     if (bytesToCopy >= Integer.MAX_VALUE) {
       throw new IllegalStateException("Copy is too large, need to do chunked copy");
     }
-    ByteBuffer bb = buff.asByteBuffer(startOffset, (int)bytesToCopy);
-    int start = bb.getInt();
-    out.writeIntNativeOrder(0);
-    long total = Integer.BYTES;
-    for (int i = 1; i < (numRows + 1); i++) {
-      int offset = bb.getInt();
-      out.writeIntNativeOrder(offset - start);
-      total += Integer.BYTES;
-    }
+    HostMemoryBuffer finalBuff = HostMemoryBuffer.allocate(bytesToCopy);
+    long total = Table.populateOffsetVector(
+      buff.address + startOffset, finalBuff.address, numRows);
+    out.copyDataFrom(finalBuff, 0, bytesToCopy);
+    finalBuff.close();
     assert total == bytesToCopy;
     long ret = padFor64byteAlignment(out, total);
     return ret;

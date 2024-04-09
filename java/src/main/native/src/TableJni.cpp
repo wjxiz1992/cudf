@@ -2983,6 +2983,22 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_partition(JNIEnv *env, jc
   }
   CATCH_STD(env, NULL);
 }
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Table_populateOffsetVector(JNIEnv *env, jclass,
+                                                                            jlong origAddress,
+                                                                            jlong destAddress,
+                                                                            jlong numRows) {
+  uint32_t* orig_offsets = reinterpret_cast<uint32_t*>(origAddress);
+  uint32_t* dest_offsets = reinterpret_cast<uint32_t*>(destAddress);
+
+  dest_offsets[0] = 0; // we always start with 0
+  long total = 4;
+  uint32_t start_offset = orig_offsets[0];
+  for (long i = 1; i <= numRows; ++i) {
+    dest_offsets[i] = orig_offsets[i] - start_offset;
+  }
+  total += (numRows * 4);
+  return total;
+}
 
 JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_hashPartition(
     JNIEnv *env, jclass, jlong input_table, jintArray columns_to_hash, jint hash_function,
