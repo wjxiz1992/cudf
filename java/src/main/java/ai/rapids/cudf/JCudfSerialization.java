@@ -1145,11 +1145,11 @@ public class JCudfSerialization {
 
   private static DataWriter writerFrom(OutputStream out, boolean useBufferedStream) {
     if (!(out instanceof DataOutputStream)) {
-      if (useBufferedStream) {
-        out = new DataOutputStream(new BufferedOutputStream(out));
-      } else {
+      //if (useBufferedStream) {
+      //  out = new DataOutputStream(new BufferedOutputStream(out));
+      //} else {
         out = new DataOutputStream(out);
-      }
+      //}
     }
     return new DataOutputStreamWriter((DataOutputStream) out);
   }
@@ -1529,10 +1529,10 @@ public class JCudfSerialization {
       if (numRows > 0) {
         try (NvtxRange offsetRange = new NvtxRange("Write Offset Data", NvtxColor.ORANGE)) {
           copySlicedOffsets(out, column, rowOffset, numRows);
-          if (type.equals(DType.STRING)) {
-            try (NvtxRange dataRange = new NvtxRange("Write String Data", NvtxColor.RED)) {
-              copySlicedStringData(out, column, rowOffset, numRows);
-            }
+        }
+        if (type.equals(DType.STRING)) {
+          try (NvtxRange dataRange = new NvtxRange("Write String Data", NvtxColor.RED)) {
+            copySlicedStringData(out, column, rowOffset, numRows);
           }
         }
       }
