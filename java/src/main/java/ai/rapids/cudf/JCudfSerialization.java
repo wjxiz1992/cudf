@@ -1407,7 +1407,7 @@ public class JCudfSerialization {
     if (bytesToCopy >= Integer.MAX_VALUE) {
       throw new IllegalStateException("Copy is too large, need to do chunked copy");
     }
-    HostMemoryBuffer finalBuff = HostMemoryBuffer.allocate(bytesToCopy);
+    HostMemoryBuffer finalBuff = HostMemoryBuffer.allocate(bytesToCopy, false);
     long total = Table.populateOffsetVector(
       buff.address + startOffset, finalBuff.address, numRows);
     out.copyDataFrom(finalBuff, 0, bytesToCopy);
