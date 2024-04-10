@@ -2983,22 +2983,6 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_partition(JNIEnv *env, jc
   }
   CATCH_STD(env, NULL);
 }
-JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Table_populateOffsetVector(JNIEnv *env, jclass,
-                                                                            jlong origAddress,
-                                                                            jlong destAddress,
-                                                                            jlong numRows) {
-  uint32_t* orig_offsets = reinterpret_cast<uint32_t*>(origAddress);
-  uint32_t* dest_offsets = reinterpret_cast<uint32_t*>(destAddress);
-
-  dest_offsets[0] = 0; // we always start with 0
-  long total = 4;
-  uint32_t start_offset = orig_offsets[0];
-  for (long i = 1; i <= numRows; ++i) {
-    dest_offsets[i] = orig_offsets[i] - start_offset;
-  }
-  total += (numRows * 4);
-  return total;
-}
 
 JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_hashPartition(
     JNIEnv *env, jclass, jlong input_table, jintArray columns_to_hash, jint hash_function,
@@ -3870,15 +3854,56 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Table_writeToSink(
     *sink, rowOffset, numRows);
 }
 
-JNIEXPORT void JNICALL Java_ai_rapids_cudf_Table_copyDataDirect(
-  JNIEnv *env, jclass, jlong srcAddress, jbyteArray buff, jlong srcOffset, jlong length) {
-  
-  auto src = reinterpret_cast<uint8_t*>(srcAddress);
-  jbyte* buffer_ptr = env->GetByteArrayElements(buff, NULL);
+struct native_copier {
+  jbyte* buff;
+  jbyteArray jbuff;
+  JNIEnv * _env;
+  native_copier(JNIEnv *env, jbyteArray jb) {
+    jbuff = jb;
+    _env = env;
+    buff = _env->GetByteArrayElements(jbuff, NULL);
+  }
 
-  memcpy(buffer_ptr, src + srcOffset, length);
+  ~native_copier() {
+    _env->ReleaseByteArrayElements(jbuff, buff, 0); 
+  }
+};
 
-  env->ReleaseByteArrayElements(buff, buffer_ptr, 0);
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Table_makeCopier(
+  JNIEnv *env, jclass, jbyteArray buff) {
+  return reinterpret_cast<long>(new native_copier(env, buff));
 }
+
+JNIEXPORT void JNICALL Java_ai_rapids_cudf_Table_releaseCopier(
+  JNIEnv *env, jclass, jlong ptr) {
+  delete reinterpret_cast<native_copier*>(ptr);
+}
+
+JNIEXPORT void JNICALL Java_ai_rapids_cudf_Table_copyDataDirect(
+  JNIEnv *env, jclass, jlong srcAddress, jlong copier, jlong srcOffset, jlong length) {
+  auto src = reinterpret_cast<uint8_t*>(srcAddress);
+  auto copier_ptr = reinterpret_cast<native_copier*>(copier);
+  memcpy(copier_ptr->buff, src + srcOffset, length);
+}
+
+// All this does is generate an offset vector in little endian order, ready to be written
+// to the java stream. We may win in removing the byte-per-byte copy we had before.
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Table_populateOffsetVector(JNIEnv *env, jclass,
+                                                                            jlong origAddress,
+                                                                            jlong destAddress,
+                                                                            jlong numRows) {
+  uint32_t* orig_offsets = reinterpret_cast<uint32_t*>(origAddress);
+  uint32_t* dest_offsets = reinterpret_cast<uint32_t*>(destAddress);
+
+  dest_offsets[0] = 0; // we always start with 0
+  long total = 4;
+  uint32_t start_offset = orig_offsets[0];
+  for (long i = 1; i <= numRows; ++i) {
+    dest_offsets[i] = orig_offsets[i] - start_offset;
+  }
+  total += (numRows * 4);
+  return total;
+}
+
 
 } // extern "C"
