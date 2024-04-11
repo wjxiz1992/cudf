@@ -188,7 +188,7 @@ uint64_t get_raw_string_data_size(
     return 0;
   }
   cudf::strings_column_view string_col(col);
-  auto begin_it = string_col.offsets_begin() + row_offset;
+  auto begin_it = string_col.offsets().begin<int32_t>() + string_col.offset() + row_offset;
   auto end_it = begin_it + num_rows;
   return end_it - begin_it;
 }
