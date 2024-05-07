@@ -51,6 +51,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <iostream>
 #include <numeric>
 #include <utility>
 
@@ -1269,6 +1270,7 @@ build_chunk_dictionaries(hostdevice_2dvector<EncColumnChunk>& chunks,
 
   chunks.device_to_host_sync(stream);
 
+  std::cout << "===dictionary_policy===" << dict_policy << "=======" << std::endl;
   // Make decision about which chunks have dictionary
   bool cannot_honor_request = false;
   for (auto& ck : h_chunks) {
@@ -1292,7 +1294,11 @@ build_chunk_dictionaries(hostdevice_2dvector<EncColumnChunk>& chunks,
       // don't use dictionary if it gets too large for the given compression codec
       if (dict_policy == dictionary_policy::ADAPTIVE) {
         auto const unique_size = static_cast<size_t>(ck.uniq_data_size);
-        if (unique_size > max_page_bytes(compression, max_dict_size)) { return {false, 0}; }
+        auto threshold = max_page_bytes(compression, max_dict_size);
+        if (unique_size > threshold) {
+	  std::cout << "skipped an attempt " << unique_size << " > " << threshold << std::endl;
+	  return {false, 0};
+	}
       }
 
       return {true, nbits};
