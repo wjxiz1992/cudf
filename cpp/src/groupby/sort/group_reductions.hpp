@@ -101,6 +101,14 @@ std::unique_ptr<column> group_min(column_view const& values,
                                   rmm::cuda_stream_view stream,
                                   rmm::device_async_resource_ref mr);
 
+std::unique_ptr<column> group_min_by(column_view const& structs_column,
+                                     column_view const& group_sizes,
+                                     cudf::device_span<size_type const> group_labels,
+                                     cudf::device_span<size_type const> group_offsets,
+                                     size_type num_groups,
+                                     rmm::cuda_stream_view stream,
+                                     rmm::device_async_resource_ref mr);
+
 /**
  * @brief Internal API to calculate groupwise maximum value
  *
