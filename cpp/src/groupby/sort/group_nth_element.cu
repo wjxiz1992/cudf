@@ -125,6 +125,7 @@ std::unique_ptr<column> group_nth_element(column_view const& values,
                        });
   }
 
+  printf("XX gather 5");
   auto output_table = cudf::detail::gather(table_view{{values}},
                                            nth_index,
                                            out_of_bounds_policy::NULLIFY,

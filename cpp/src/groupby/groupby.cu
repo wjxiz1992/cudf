@@ -248,6 +248,7 @@ groupby::groups groupby::get_groups(table_view values, rmm::device_async_resourc
   auto const group_offsets_vector = cudf::detail::make_std_vector_sync(group_offsets, stream);
 
   if (not values.is_empty()) {
+    printf("XX gather 1");
     auto grouped_values = cudf::detail::gather(values,
                                                helper().key_sort_order(stream),
                                                cudf::out_of_bounds_policy::DONT_CHECK,

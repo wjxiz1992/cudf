@@ -183,6 +183,7 @@ void aggregate_result_functor::operator()<aggregation::MIN>(aggregation const& a
         static_cast<void const*>(argmin_result.template data<size_type>()),
         nullptr,
         0);
+      printf("XX gather 2");
       auto transformed_result =
         cudf::detail::gather(table_view({values}),
                              null_removed_map,
