@@ -166,7 +166,7 @@ struct group_reduction_functor<
 
     if (values.is_empty()) { return result; }
 
-    // Perform segmented reduction to find ARGMIN/ARGMAX.
+    // Perform segmented reduction.
     auto const do_reduction = [&](auto const& inp_iter, auto const& out_iter, auto const& binop) {
       thrust::reduce_by_key(rmm::exec_policy(stream),
                             group_labels.data(),
@@ -229,7 +229,7 @@ struct group_reduction_functor<
 
     if (values.is_empty()) { return result; }
 
-    // Perform segmented reduction.
+    // Perform segmented reduction to find ARGMIN/ARGMAX.
     auto const do_reduction = [&](auto const& inp_iter, auto const& out_iter, auto const& binop) {
       thrust::reduce_by_key(rmm::exec_policy(stream),
                             group_labels.data(),
