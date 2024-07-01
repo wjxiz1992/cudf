@@ -196,7 +196,17 @@ struct update_target_element<
                              size_type source_index) const noexcept
   {
     printf("!!!update_target_element of MIN_BY\n");
+    
     if (source_has_nulls and source.is_null(source_index)) { return; }
+
+    // using Target       = target_type_t<Source, aggregation::MIN>;
+    // using DeviceTarget = device_storage_type_t<Target>;
+    // using DeviceSource = device_storage_type_t<Source>;
+
+    // cudf::detail::atomic_min(&target.element<DeviceTarget>(target_index),
+    //                          static_cast<DeviceTarget>(source.element<DeviceSource>(source_index)));
+
+    // if (target_has_nulls and target.is_null(target_index)) { target.set_valid(target_index); }
 
   }
 };

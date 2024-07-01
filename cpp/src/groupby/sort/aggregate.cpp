@@ -222,6 +222,7 @@ void aggregate_result_functor::operator()<aggregation::MIN_BY>(aggregation const
                                        helper.group_labels(stream),
                                        helper.group_offsets(stream),
                                        helper.num_groups(stream),
+                                       helper.key_sort_order(stream),
                                        stream,
                                        mr));
 }

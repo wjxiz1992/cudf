@@ -106,6 +106,7 @@ std::unique_ptr<column> group_min_by(column_view const& structs_column,
                                      cudf::device_span<size_type const> group_labels,
                                      cudf::device_span<size_type const> group_offsets,
                                      size_type num_groups,
+                                     column_view const& key_sort_order,
                                      rmm::cuda_stream_view stream,
                                      rmm::device_async_resource_ref mr);
 
