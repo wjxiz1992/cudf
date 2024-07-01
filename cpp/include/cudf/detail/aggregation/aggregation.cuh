@@ -134,6 +134,29 @@ struct update_target_element<
   aggregation::MIN,
   target_has_nulls,
   source_has_nulls,
+  std::enable_if_t<is_fixed_width<Source>() && cudf::has_atomic_support<Source>() &&
+                   !is_fixed_point<Source>()>> {
+  __device__ void operator()(mutable_column_device_view target,
+                             size_type target_index,
+                             column_device_view source,
+                             size_type source_index) const noexcept
+  {
+    if (source_has_nulls and source.is_null(source_index)) { return; }
+
+    using Target = target_type_t<Source, aggregation::MIN>;
+    cudf::detail::atomic_min(&target.element<Target>(target_index),
+                             static_cast<Target>(source.element<Source>(source_index)));
+
+    if (target_has_nulls and target.is_null(target_index)) { target.set_valid(target_index); }
+  }
+};
+
+template <typename Source, bool target_has_nulls, bool source_has_nulls>
+struct update_target_element<
+  Source,
+  aggregation::MIN,
+  target_has_nulls,
+  source_has_nulls,
   std::enable_if_t<is_fixed_point<Source>() &&
                    cudf::has_atomic_support<device_storage_type_t<Source>>()>> {
   __device__ void operator()(mutable_column_device_view target,
