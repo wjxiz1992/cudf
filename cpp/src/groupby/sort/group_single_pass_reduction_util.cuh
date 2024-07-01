@@ -110,6 +110,19 @@ struct group_reduction_functor {
   }
 };
 
+template <aggregation::Kind K>
+struct group_reduction_dispatcher {
+  template <typename T>
+  std::unique_ptr<column> operator()(column_view const& values,
+                                     size_type num_groups,
+                                     cudf::device_span<cudf::size_type const> group_labels,
+                                     rmm::cuda_stream_view stream,
+                                     rmm::device_async_resource_ref mr)
+  {
+    return group_reduction_functor<K, T>::invoke(values, num_groups, group_labels, stream, mr);
+  }
+};
+
 /**
  * @brief Check if the given aggregation K with data type T is supported in groupby reduction.
  */
@@ -117,7 +130,6 @@ template <aggregation::Kind K, typename T>
 static constexpr bool is_group_reduction_supported()
 {
   switch (K) {
-    case aggregation::MIN_BY: return cudf::is_nested<T>();
     case aggregation::SUM:
       return cudf::is_numeric<T>() || cudf::is_duration<T>() || cudf::is_fixed_point<T>();
     case aggregation::PRODUCT: return cudf::detail::is_product_supported<T>();
@@ -128,23 +140,6 @@ static constexpr bool is_group_reduction_supported()
     default: return false;
   }
 }
-
-template <aggregation::Kind K>
-struct group_reduction_dispatcher {
-  template <typename T>
-  std::unique_ptr<column> operator()(column_view const& values,
-                                     size_type num_groups,
-                                     cudf::device_span<cudf::size_type const> group_labels,
-                                     rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr)
-  { 
-    printf("K = %d\n", K);
-    printf("group_reduction_dispatcher\n");
-    printf("is_group_reduction_supported<K, T>() = %d\n", is_group_reduction_supported<K, T>());
-    printf("is_nested<T>() = %d\n", cudf::is_nested<T>());
-    return group_reduction_functor<K, T>::invoke(values, num_groups, group_labels, stream, mr);
-  }
-};
 
 template <aggregation::Kind K, typename T>
 struct group_reduction_functor<
@@ -171,7 +166,7 @@ struct group_reduction_functor<
 
     if (values.is_empty()) { return result; }
 
-    // Perform segmented reduction.
+    // Perform segmented reduction to find ARGMIN/ARGMAX.
     auto const do_reduction = [&](auto const& inp_iter, auto const& out_iter, auto const& binop) {
       thrust::reduce_by_key(rmm::exec_policy(stream),
                             group_labels.data(),

@@ -22,7 +22,6 @@
 #include <cudf/detail/utilities/assert.cuh>
 #include <cudf/detail/utilities/device_atomics.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
-#include <cudf/structs/structs_column_device_view.cuh>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/utilities/traits.cuh>
 
@@ -104,10 +103,6 @@ template <>
 struct corresponding_operator<aggregation::COUNT_ALL> {
   using type = DeviceCount;
 };
-template <>
-struct corresponding_operator<aggregation::MIN_BY> {
-  using type = DeviceMin;
-};
 
 template <aggregation::Kind k>
 using corresponding_operator_t = typename corresponding_operator<k>::type;
@@ -139,29 +134,6 @@ struct update_target_element<
   aggregation::MIN,
   target_has_nulls,
   source_has_nulls,
-  std::enable_if_t<is_fixed_width<Source>() && cudf::has_atomic_support<Source>() &&
-                   !is_fixed_point<Source>()>> {
-  __device__ void operator()(mutable_column_device_view target,
-                             size_type target_index,
-                             column_device_view source,
-                             size_type source_index) const noexcept
-  {
-    if (source_has_nulls and source.is_null(source_index)) { return; }
-
-    using Target = target_type_t<Source, aggregation::MIN>;
-    cudf::detail::atomic_min(&target.element<Target>(target_index),
-                             static_cast<Target>(source.element<Source>(source_index)));
-
-    if (target_has_nulls and target.is_null(target_index)) { target.set_valid(target_index); }
-  }
-};
-
-template <typename Source, bool target_has_nulls, bool source_has_nulls>
-struct update_target_element<
-  Source,
-  aggregation::MIN,
-  target_has_nulls,
-  source_has_nulls,
   std::enable_if_t<is_fixed_point<Source>() &&
                    cudf::has_atomic_support<device_storage_type_t<Source>>()>> {
   __device__ void operator()(mutable_column_device_view target,
@@ -179,35 +151,6 @@ struct update_target_element<
                              static_cast<DeviceTarget>(source.element<DeviceSource>(source_index)));
 
     if (target_has_nulls and target.is_null(target_index)) { target.set_valid(target_index); }
-  }
-};
-
-template <typename Source, bool target_has_nulls, bool source_has_nulls>
-struct update_target_element<
-  Source,
-  aggregation::MIN_BY,
-  target_has_nulls,
-  source_has_nulls,
-  std::enable_if_t<is_valid_aggregation<Source, aggregation::MIN_BY>() and
-                   cudf::is_relationally_comparable<Source, Source>()>> {
-  __device__ void operator()(mutable_column_device_view target,
-                             size_type target_index,
-                             column_device_view source,
-                             size_type source_index) const noexcept
-  {
-    printf("!!!update_target_element of MIN_BY\n");
-    
-    if (source_has_nulls and source.is_null(source_index)) { return; }
-
-    // using Target       = target_type_t<Source, aggregation::MIN>;
-    // using DeviceTarget = device_storage_type_t<Target>;
-    // using DeviceSource = device_storage_type_t<Source>;
-
-    // cudf::detail::atomic_min(&target.element<DeviceTarget>(target_index),
-    //                          static_cast<DeviceTarget>(source.element<DeviceSource>(source_index)));
-
-    // if (target_has_nulls and target.is_null(target_index)) { target.set_valid(target_index); }
-
   }
 };
 
@@ -362,8 +305,7 @@ struct update_target_element<
   target_has_nulls,
   source_has_nulls,
   std::enable_if_t<not(k == aggregation::ARGMIN or k == aggregation::ARGMAX or
-                       k == aggregation::COUNT_VALID or k == aggregation::COUNT_ALL or
-                       k == aggregation::MIN_BY)>> {
+                       k == aggregation::COUNT_VALID or k == aggregation::COUNT_ALL)>> {
   __device__ void operator()(mutable_column_device_view target,
                              size_type target_index,
                              column_device_view source,
@@ -637,7 +579,6 @@ struct identity_initializer {
             k == aggregation::ARGMAX or k == aggregation::ARGMIN or
             k == aggregation::SUM_OF_SQUARES or k == aggregation::STD or
             k == aggregation::VARIANCE or
-            k == aggregation::MIN_BY or
             (k == aggregation::PRODUCT and is_product_supported<T>()));
   }
 

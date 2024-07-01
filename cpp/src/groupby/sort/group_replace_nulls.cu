@@ -72,7 +72,6 @@ std::unique_ptr<column> group_replace_nulls(cudf::column_view const& grouped_val
       rmm::exec_policy(stream), gl_rbegin, gl_rbegin + size, in_rbegin, gm_rbegin, eq, func);
   }
 
-  printf("XX gather 6");
   auto output = cudf::detail::gather(cudf::table_view({grouped_value}),
                                      gather_map,
                                      cudf::out_of_bounds_policy::DONT_CHECK,

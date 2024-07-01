@@ -183,7 +183,6 @@ void aggregate_result_functor::operator()<aggregation::MIN>(aggregation const& a
         static_cast<void const*>(argmin_result.template data<size_type>()),
         nullptr,
         0);
-      printf("XX gather 2");
       auto transformed_result =
         cudf::detail::gather(table_view({values}),
                              null_removed_map,
@@ -204,25 +203,11 @@ void aggregate_result_functor::operator()<aggregation::MIN_BY>(aggregation const
 {
   if (cache.has_result(values, agg)) return;
 
-  auto count_agg = make_count_aggregation(null_policy::INCLUDE);
-  if (count_agg->kind == aggregation::COUNT_VALID) {
-    operator()<aggregation::COUNT_VALID>(*count_agg);
-  } else if (count_agg->kind == aggregation::COUNT_ALL) {
-    operator()<aggregation::COUNT_ALL>(*count_agg);
-  } else {
-    CUDF_FAIL("Wrong count aggregation kind");
-  }
-  column_view group_sizes = cache.get_result(values, *count_agg);
-
-  printf("MIN_BY sort\n");
   cache.add_result(values,
                   agg,
                   detail::group_min_by(get_grouped_values(),
-                                       group_sizes,
                                        helper.group_labels(stream),
-                                       helper.group_offsets(stream),
                                        helper.num_groups(stream),
-                                       helper.key_sort_order(stream),
                                        stream,
                                        mr));
 }

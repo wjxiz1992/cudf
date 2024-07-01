@@ -85,7 +85,7 @@ constexpr std::array<aggregation::Kind, 12> hash_aggregations{aggregation::SUM,
 
 // Could be hash: SUM, PRODUCT, MIN, MAX, COUNT_VALID, COUNT_ALL, ANY, ALL,
 // Compound: MEAN(SUM, COUNT_VALID), VARIANCE, STD(MEAN (SUM, COUNT_VALID), COUNT_VALID),
-// ARGMAX, ARGMIN, MIN_BY
+// ARGMAX, ARGMIN
 
 // TODO replace with std::find in C++20 onwards.
 template <class T, size_t N>
@@ -219,7 +219,6 @@ class hash_compound_agg_finalizer final : public cudf::detail::aggregation_final
   auto to_dense_agg_result(cudf::aggregation const& agg)
   {
     auto s                  = sparse_results->get_result(col, agg);
-    printf("XX gather 3");
     auto dense_result_table = cudf::detail::gather(table_view({std::move(s)}),
                                                    gather_map,
                                                    out_of_bounds_policy::DONT_CHECK,
@@ -244,7 +243,6 @@ class hash_compound_agg_finalizer final : public cudf::detail::aggregation_final
       static_cast<void const*>(arg_result->view().template data<size_type>()),
       nullptr,
       0);
-    printf("XX gather 4");
     auto gather_argminmax =
       cudf::detail::gather(table_view({col}),
                            null_removed_map,
