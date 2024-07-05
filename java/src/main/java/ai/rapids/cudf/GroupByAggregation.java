@@ -116,13 +116,6 @@ public final class GroupByAggregation {
   }
 
   /**
-   * MinBy Aggregation
-   */
-  public static GroupByAggregation minBy() {
-    return new GroupByAggregation(Aggregation.minBy());
-  }
-  
-  /**
    * Max Aggregation
    */
   public static GroupByAggregation max() {

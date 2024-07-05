@@ -119,8 +119,7 @@ class aggregation {
     TDIGEST,         ///< create a tdigest from a set of input values
     MERGE_TDIGEST,   ///< create a tdigest by merging multiple tdigests together
     HISTOGRAM,       ///< compute frequency of each element
-    MERGE_HISTOGRAM,  ///< merge partial values of HISTOGRAM aggregation,
-    MIN_BY          ///< min reduction by another column
+    MERGE_HISTOGRAM  ///< merge partial values of HISTOGRAM aggregation,
   };
 
   aggregation() = delete;
@@ -381,17 +380,6 @@ std::unique_ptr<Base> make_argmax_aggregation();
  */
 template <typename Base = aggregation>
 std::unique_ptr<Base> make_argmin_aggregation();
-
-/**
- * @brief Factory to create a MIN_BY aggregation
- *
- * `MIN_BY` returns the value of the first element in the group that is the minimum
- * according to the order_by column.
- *
- * @return A MIN_BY aggregation object
- */
-template <typename Base = aggregation>
-std::unique_ptr<Base> make_min_by_aggregation();
 
 /**
  * @brief Factory to create a NUNIQUE aggregation
