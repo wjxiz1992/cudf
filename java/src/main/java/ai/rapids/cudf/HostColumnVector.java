@@ -2149,6 +2149,13 @@ public final class HostColumnVector extends HostColumnVectorCore {
     public Object getField(int index) {
       return this.dataRecord.get(index);
     }
+
+    @Override
+    public String toString() {
+      return "StructData{" +
+              "dataRecord=" + dataRecord +
+              '}';
+    }
   }
 
   public static class StructType extends HostColumnVector.DataType {
@@ -2214,4 +2221,5 @@ public final class HostColumnVector extends HostColumnVectorCore {
       return 0;
     }
   }
+
 }
