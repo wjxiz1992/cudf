@@ -18,6 +18,8 @@
 
 package ai.rapids.cudf;
 
+import ai.rapids.cudf.utils.Arms;
+
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.math.RoundingMode;
@@ -280,6 +282,22 @@ public final class HostColumnVector extends HostColumnVectorCore {
       if (offsets != null) {
         offsets.close();
       }
+    }
+  }
+
+  /**
+   * Convert a list of HostColumnVectors to a Table.
+   * `columns` is closed after the Table is created.
+   */
+  public static Table toTable(List<HostColumnVector> columns) {
+    ColumnVector[] cols = new ColumnVector[columns.size()];
+    try (CloseableArray<ColumnVector> array = CloseableArray.wrap(cols)) {
+      for (int i = 0; i < columns.size(); i += 1) {
+        array.set(i, columns.get(i).copyToDevice());
+      }
+      return new Table(array.getArray());
+    } finally {
+      Arms.closeQuietly(columns);
     }
   }
 
