@@ -71,8 +71,55 @@ static void bench_find_string(nvbench::state& state)
       cudf::strings::find_multiple(input, cudf::strings_column_view(targets));
     });
   } else if (api == "contains") {
-    state.exec(nvbench::exec_tag::sync,
-               [&](nvbench::launch& launch) { cudf::strings::contains(input, target); });
+    constexpr bool combine          = false;  // test true/false
+    bool has_same_target_first_char = false;  // test true/false
+    constexpr int iters             = 10;     // test 4/10
+    bool check_result               = false;
+
+    std::vector<std::string> match_targets({" abc",
+                                            "W43",
+                                            "0987 5W43",
+                                            "123 abc",
+                                            "23 abc",
+                                            "3 abc",
+                                            "é",
+                                            "7 5W43",
+                                            "87 5W43",
+                                            "987 5W43"});
+    auto multi_targets = std::vector<std::string>{};
+    for (int i = 0; i < iters; i++) {
+      // if has same first chars in targets, use duplicated targets.
+      int idx = has_same_target_first_char ? i / 2 : i;
+      multi_targets.emplace_back(match_targets[idx]);
+    }
+
+    if constexpr (not combine) {
+      state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
+        std::vector<std::unique_ptr<cudf::column>> contains_results;
+        std::vector<cudf::column_view> contains_cvs;
+        for (size_t i = 0; i < multi_targets.size(); i++) {
+          contains_results.emplace_back(
+            cudf::strings::contains(input, cudf::string_scalar(multi_targets[i])));
+          contains_cvs.emplace_back(contains_results.back()->view());
+        }
+
+        if (check_result) {
+          cudf::test::strings_column_wrapper multi_targets_column(multi_targets.begin(),
+                                                                  multi_targets.end());
+          auto tab =
+            cudf::strings::multi_contains(input, cudf::strings_column_view(multi_targets_column));
+          for (int i = 0; i < tab->num_columns(); i++) {
+            cudf::test::detail::expect_columns_equal(contains_cvs[i], tab->get_column(i).view());
+          }
+        }
+      });
+    } else {  // combine
+      state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
+        cudf::test::strings_column_wrapper multi_targets_column(multi_targets.begin(),
+                                                                multi_targets.end());
+        cudf::strings::multi_contains(input, cudf::strings_column_view(multi_targets_column));
+      });
+    }
   } else if (api == "starts_with") {
     state.exec(nvbench::exec_tag::sync,
                [&](nvbench::launch& launch) { cudf::strings::starts_with(input, target); });
