@@ -1,6 +1,7 @@
 package ai.rapids.cudf.serde;
 
 import ai.rapids.cudf.*;
+import ai.rapids.cudf.utils.Arms;
 
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -54,11 +55,20 @@ public interface TableSerializer {
     Object readOneTableBuffer(InputStream in);
 
     /**
-     * Merge multiple table buffers returned in {@link #readOneTableBuffer}  into a single table.
+     * Merge multiple table buffers returned in {@link #readOneTableBuffer}  into a single table on gpu.
      *
      * @param buffers An array of table buffers.
      * @param schema  The schema of the table.
      * @return The merged table.
      */
     Table mergeTable(List<Object> buffers, Schema schema);
+
+    /**
+     * Merge multiple serialized table buffers returned in {@link #readOneTableBuffer}  into a single table on host.
+     *
+     * @param buffers An array of table buffers.
+     * @param schema  The schema of the table.
+     * @return The merged table.
+     */
+    List<HostColumnVector> mergeToHost(List<Object> buffers, Schema schema);
 }
