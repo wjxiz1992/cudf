@@ -91,6 +91,7 @@ public class KudoSerializer implements TableSerializer {
                 .collect(Collectors.toList());
 
         try (MultiTableDeserializer deserializer = new MultiTableDeserializer(serializedTables)) {
+            System.out.println("Deserializer: " + deserializer);
             return Visitors.visitSchema(schema, deserializer);
         } catch (Exception e) {
             throw new RuntimeException(e);
@@ -123,7 +124,9 @@ public class KudoSerializer implements TableSerializer {
         }
 
         if (bytesWritten != header.getTotalDataLen()) {
-            throw new IllegalStateException("Header total data length: " + header.getTotalDataLen() + " does not match actual written data length: " + bytesWritten);
+            throw new IllegalStateException("Header total data length: " + header.getTotalDataLen() +
+                    " does not match actual written data length: " + bytesWritten +
+                    ", rowOffset: " + rowOffset + " numRows: " + numRows);
         }
 
         out.flush();

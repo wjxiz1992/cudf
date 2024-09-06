@@ -39,11 +39,11 @@ class SerializedTableHeaderCalc implements SchemaWithColumnsVisitor<Void, Serial
 
     @Override
     public Void visitStruct(Schema structType, HostColumnVectorCore col, List<Void> children) {
-        SliceInfo parent = sliceInfos.peekLast();
+        SliceInfo parent = sliceInfos.getLast();
 
         long validityBufferLength = 0;
         if (col.hasValidityVector()) {
-            validityBufferLength = KudoSerializer.padFor64byteAlignment(parent.getValidityBufferInfo().getBufferLength());
+            validityBufferLength = parent.getValidityBufferInfo().getBufferLength();
         }
 
         this.validityBufferLen += validityBufferLength;
@@ -55,12 +55,12 @@ class SerializedTableHeaderCalc implements SchemaWithColumnsVisitor<Void, Serial
 
     @Override
     public Void preVisitList(Schema listType, HostColumnVectorCore col) {
-        SliceInfo parent = sliceInfos.peekLast();
+        SliceInfo parent = sliceInfos.getLast();
 
 
         long validityBufferLength = 0;
         if (col.hasValidityVector()) {
-            validityBufferLength = KudoSerializer.padFor64byteAlignment(parent.getValidityBufferInfo().getBufferLength());
+            validityBufferLength = parent.getValidityBufferInfo().getBufferLength();
         }
 
         long offsetBufferLength = (parent.rowCount + 1) * Integer.BYTES;
@@ -116,16 +116,20 @@ class SerializedTableHeaderCalc implements SchemaWithColumnsVisitor<Void, Serial
                     return 0;
                 }
             case OFFSET:
-                if (DType.STRING.equals(primitiveType.getType()) && col.getOffsets() != null && info.rowCount > 0) {
+                if (DType.STRING.equals(primitiveType.getType()) && info.getRowCount() > 0) {
                     return (info.rowCount + 1) * Integer.BYTES;
                 } else {
                     return 0;
                 }
             case DATA:
                 if (DType.STRING.equals(primitiveType.getType())) {
-                    long startByteOffset = col.getOffsets().getInt(info.offset * Integer.BYTES);
-                    long endByteOffset = col.getOffsets().getInt((info.offset + info.rowCount) * Integer.BYTES);
-                    return endByteOffset - startByteOffset;
+                    if (col.getOffsets() != null) {
+                        long startByteOffset = col.getOffsets().getInt(info.offset * Integer.BYTES);
+                        long endByteOffset = col.getOffsets().getInt((info.offset + info.rowCount) * Integer.BYTES);
+                        return endByteOffset - startByteOffset;
+                    } else {
+                        return 0;
+                    }
                 } else {
                     if (primitiveType.getType().getSizeInBytes() > 0) {
                         return primitiveType.getType().getSizeInBytes() * info.rowCount;
