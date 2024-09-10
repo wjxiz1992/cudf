@@ -75,7 +75,7 @@ public class KudoSerializer implements TableSerializer {
                 return new SerializedTable(header, null);
             }
 
-            HostMemoryBuffer buffer = HostMemoryBuffer.allocate(header.getTotalDataLen());
+            HostMemoryBuffer buffer = HostMemoryBuffer.allocate(header.getTotalDataLen(), false);
             buffer.copyFromStream(0, din, header.getTotalDataLen());
             return new SerializedTable(header, buffer);
         } catch (Exception e) {
@@ -91,7 +91,6 @@ public class KudoSerializer implements TableSerializer {
                 .collect(Collectors.toList());
 
         try (MultiTableDeserializer deserializer = new MultiTableDeserializer(serializedTables)) {
-            System.out.println("Deserializer: " + deserializer);
             return Visitors.visitSchema(schema, deserializer);
         } catch (Exception e) {
             throw new RuntimeException(e);
