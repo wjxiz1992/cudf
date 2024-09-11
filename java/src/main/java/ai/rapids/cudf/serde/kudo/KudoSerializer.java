@@ -75,7 +75,7 @@ public class KudoSerializer implements TableSerializer {
                 return new SerializedTable(header, null);
             }
 
-            HostMemoryBuffer buffer = HostMemoryBuffer.allocate(header.getTotalDataLen());
+            HostMemoryBuffer buffer = HostMemoryBuffer.allocate(header.getTotalDataLen(), false);
             buffer.copyFromStream(0, din, header.getTotalDataLen());
             return new SerializedTable(header, buffer);
         } catch (Exception e) {
@@ -123,7 +123,9 @@ public class KudoSerializer implements TableSerializer {
         }
 
         if (bytesWritten != header.getTotalDataLen()) {
-            throw new IllegalStateException("Header total data length: " + header.getTotalDataLen() + " does not match actual written data length: " + bytesWritten);
+            throw new IllegalStateException("Header total data length: " + header.getTotalDataLen() +
+                    " does not match actual written data length: " + bytesWritten +
+                    ", rowOffset: " + rowOffset + " numRows: " + numRows);
         }
 
         out.flush();

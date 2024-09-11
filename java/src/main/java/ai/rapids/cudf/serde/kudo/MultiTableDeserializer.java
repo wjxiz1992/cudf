@@ -9,6 +9,7 @@ import java.nio.IntBuffer;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import static ai.rapids.cudf.serde.kudo.KudoSerializer.padFor64byteAlignment;
 import static ai.rapids.cudf.utils.PreConditions.ensure;
@@ -34,8 +35,11 @@ public class MultiTableDeserializer implements SchemaVisitor<HostColumnVector, L
     private final long[] currentValidityOffsets;
     private final long[] currentOffsetOffsets;
     private final long[] currentDataOffset;
-    private final long totalRowCount;
+    private final Deque<SliceInfo>[] sliceInfoStack;
+    private final Deque<Long> totalRowCountStack;
     private int currentIdx;
+    // Temporary buffer to store the slice info for each table to avoid repeated allocation
+    private final SliceInfo[] outputSliceInfo;
 
     public MultiTableDeserializer(List<SerializedTable> tables) {
         Objects.requireNonNull(tables, "tables cannot be null");
@@ -44,16 +48,25 @@ public class MultiTableDeserializer implements SchemaVisitor<HostColumnVector, L
         this.currentValidityOffsets = new long[tables.size()];
         this.currentOffsetOffsets = new long[tables.size()];
         this.currentDataOffset = new long[tables.size()];
+        this.sliceInfoStack = new Deque[tables.size()];
         for (int i = 0; i < tables.size(); i++) {
             this.currentValidityOffsets[i] = 0;
             SerializedTableHeader header = tables.get(i).getHeader();
             this.currentOffsetOffsets[i] = header.getValidityBufferLen();
             this.currentDataOffset[i] = header.getValidityBufferLen() + header.getOffsetBufferLen();
+            this.sliceInfoStack[i] = new ArrayDeque<>(16);
+            this.sliceInfoStack[i].add(new SliceInfo(header.getOffset(), header.getNumRows()));
         }
-        this.totalRowCount = tables.stream().mapToLong(t -> t.getHeader().getNumRows()).sum();
+        long totalRowCount = tables.stream().mapToLong(t -> t.getHeader().getNumRows()).sum();
+        this.totalRowCountStack = new ArrayDeque<>(16);
+        totalRowCountStack.addLast(totalRowCount);
         this.currentIdx = 0;
+        this.outputSliceInfo = new SliceInfo[tables.size()];
     }
 
+    private long getCurrentTotalRowCount() {
+        return totalRowCountStack.getLast();
+    }
 
     @Override
     public List<HostColumnVector> visitTopSchema(Schema schema, List<HostColumnVector> children) {
@@ -62,38 +75,102 @@ public class MultiTableDeserializer implements SchemaVisitor<HostColumnVector, L
 
     @Override
     public HostColumnVector visitStruct(Schema structType, List<HostColumnVector> children) {
-        throw new UnsupportedOperationException("Struct not supported!");
+        AtomicLong nullCount = new AtomicLong(0);
+        HostMemoryBuffer validityBuffer = deserializeValidityBuffer(nullCount);
+
+        currentIdx += 1;
+
+        return new HostColumnVector(structType.getType(),
+                getCurrentTotalRowCount(),
+                Optional.of(nullCount.get()),
+                null,
+                validityBuffer,
+                null,
+                children.stream().map(h -> (HostColumnVectorCore) h).collect(Collectors.toList()));
     }
 
     @Override
     public HostColumnVector preVisitList(Schema listType) {
-        throw new UnsupportedOperationException("List not supported!");
+        AtomicLong nullCount = new AtomicLong(0);
+        HostMemoryBuffer validityBuffer = deserializeValidityBuffer(nullCount);
+        long listRowCount = getCurrentTotalRowCount();
+        AtomicLong outputTotalRowCount = new AtomicLong(0);
+        HostMemoryBuffer offsetBuffer = deserializeOffsetBuffer(outputTotalRowCount);
+
+
+        for (int tableIdx = 0; tableIdx < tables.size(); tableIdx += 1) {
+            sliceInfoStack[tableIdx].addLast(outputSliceInfo[tableIdx]);
+        }
+
+        this.totalRowCountStack.addLast(outputTotalRowCount.get());
+        currentIdx += 1;
+
+        return new HostColumnVector(listType.getType(),
+                listRowCount,
+                Optional.of(nullCount.get()),
+                null,
+                validityBuffer,
+                offsetBuffer,
+                Collections.emptyList());
     }
 
     @Override
     public HostColumnVector visitList(Schema listType, HostColumnVector preVisitResult, HostColumnVector childResult) {
-        throw new UnsupportedOperationException("List not supported!");
+        try (HostColumnVector prevList = preVisitResult) {
+            for (int tableIdx = 0; tableIdx < tables.size(); tableIdx += 1) {
+                sliceInfoStack[tableIdx].removeLast();
+            }
+            totalRowCountStack.removeLast();
+
+            HostMemoryBuffer[] tmpBuffer = new HostMemoryBuffer[2];
+            return Arms.closeIfException(CloseableArray.wrap(tmpBuffer), buffers -> {
+                HostMemoryBuffer validityBuffer = prevList.getValidity();
+                validityBuffer.incRefCount();
+                tmpBuffer[0] = validityBuffer;
+
+                HostMemoryBuffer offsetBuffer = prevList.getOffsets();
+                offsetBuffer.incRefCount();
+                tmpBuffer[1] = offsetBuffer;
+
+                return new HostColumnVector(listType.getType(),
+                        preVisitResult.getRowCount(),
+                        Optional.of(preVisitResult.getNullCount()),
+                        null,
+                        preVisitResult.getValidity(),
+                        preVisitResult.getOffsets(),
+                        Collections.singletonList(childResult));
+            });
+        }
     }
 
     @Override
     public HostColumnVector visit(Schema primitiveType) {
         AtomicLong nullCount = new AtomicLong(0);
         int[] dataLen = new int[tables.size()];
+        long totalDataLen = 0;
         HostMemoryBuffer validityBuffer = deserializeValidityBuffer(nullCount);
         HostMemoryBuffer offsetBuffer = null;
         if (primitiveType.getType().hasOffsets()) {
-            offsetBuffer = deserializeOffsetBuffer(dataLen);
+            AtomicLong totalDataLenHolder = new AtomicLong(0);
+            offsetBuffer = deserializeOffsetBuffer(totalDataLenHolder);
+            for (int i = 0; i < tables.size(); i += 1) {
+                dataLen[i] = (int) (outputSliceInfo[i].getRowCount());
+            }
+            totalDataLen = totalDataLenHolder.get();
         } else {
             for (int i = 0; i < tables.size(); i += 1) {
-                dataLen[i] = tables.get(i).getHeader().getNumRows() * primitiveType.getType().getSizeInBytes();
+                dataLen[i] = (int) (sliceInfoStack[i].getLast().getRowCount() *
+                        primitiveType.getType().getSizeInBytes());
+                totalDataLen += dataLen[i];
             }
         }
 
-        HostMemoryBuffer dataBuffer = deserializeDataBuffer(dataLen);
+
+        HostMemoryBuffer dataBuffer = deserializeDataBuffer(dataLen, totalDataLen);
 
         this.currentIdx += 1;
         return Arms.closeIfException(new HostColumnVector(primitiveType.getType(),
-                totalRowCount,
+                getCurrentTotalRowCount(),
                 Optional.of(nullCount.get()),
                 dataBuffer,
                 validityBuffer,
@@ -102,14 +179,14 @@ public class MultiTableDeserializer implements SchemaVisitor<HostColumnVector, L
     }
 
     private HostMemoryBuffer deserializeValidityBuffer(AtomicLong nullCount) {
-        long validityBufferSize = padFor64byteAlignment(BitVectorHelper.getValidityLengthInBytes(this.totalRowCount));
+        long validityBufferSize = padFor64byteAlignment(BitVectorHelper
+                .getValidityLengthInBytes(getCurrentTotalRowCount()));
         return Arms.closeIfException(HostMemoryBuffer.allocate(validityBufferSize), buffer -> {
             int nullCountTotal = 0;
             int startRow = 0;
             for (int tableIdx = 0; tableIdx < tables.size(); tableIdx += 1) {
                 SerializedTable table = tables.get(tableIdx);
-                SliceInfo sliceInfo = new SliceInfo(table.getHeader().getOffset(),
-                        table.getHeader().getNumRows());
+                SliceInfo sliceInfo = sliceInfoStack[tableIdx].getLast();
 
                 long thisBufferLen = 0;
 
@@ -124,7 +201,7 @@ public class MultiTableDeserializer implements SchemaVisitor<HostColumnVector, L
                 }
 
                 currentValidityOffsets[tableIdx] += thisBufferLen;
-                startRow += table.getHeader().getNumRows();
+                startRow += (int) sliceInfo.getRowCount();
             }
 
             nullCount.set(nullCountTotal);
@@ -242,46 +319,56 @@ public class MultiTableDeserializer implements SchemaVisitor<HostColumnVector, L
         }
     }
 
-    private HostMemoryBuffer deserializeOffsetBuffer(int[] dataLen) {
-        long bufferSize = Integer.BYTES * (totalRowCount + 1);
+    private HostMemoryBuffer deserializeOffsetBuffer(AtomicLong outputTotalRowCount) {
+        long bufferSize = Integer.BYTES * (getCurrentTotalRowCount() + 1);
         return Arms.closeIfException(HostMemoryBuffer.allocate(bufferSize), buffer -> {
             IntBuffer buf = buffer
                     .asByteBuffer(0L, (int) bufferSize)
                     .order(ByteOrder.LITTLE_ENDIAN)
                     .asIntBuffer();
+            int idx = 0;
             int accumulatedDataLen = 0;
             for (int tableIdx = 0; tableIdx < tables.size(); tableIdx += 1) {
                 SerializedTable table = tables.get(tableIdx);
-                SliceInfo sliceInfo = new SliceInfo(table.getHeader().getOffset(), table.getHeader().getNumRows());
+                SliceInfo sliceInfo = sliceInfoStack[tableIdx].getLast();
 
-                long thisBufferLen = Integer.BYTES * (sliceInfo.getRowCount() + 1);
+                if (sliceInfo.getRowCount() > 0) {
+                    long thisBufferLen = Integer.BYTES * (sliceInfo.getRowCount() + 1);
 
-                try (HostMemoryBuffer thisOffsetBuffer = table.getBuffer().slice(currentOffsetOffsets[tableIdx], thisBufferLen)) {
-                    IntBuffer thisBuf = thisOffsetBuffer
-                            .asByteBuffer()
-                            .order(ByteOrder.LITTLE_ENDIAN)
-                            .asIntBuffer();
-                    int firstOffset = thisBuf.get(0);
+                    try (HostMemoryBuffer thisOffsetBuffer = table.getBuffer().slice(currentOffsetOffsets[tableIdx], thisBufferLen)) {
+                        IntBuffer thisBuf = thisOffsetBuffer
+                                .asByteBuffer()
+                                .order(ByteOrder.LITTLE_ENDIAN)
+                                .asIntBuffer();
+                        int firstOffset = thisBuf.get(0);
+                        int lastOffset = thisBuf.get((int) sliceInfo.getRowCount());
 
-                    for (int i = 0; i < sliceInfo.getRowCount(); i += 1) {
-                        buf.put(thisBuf.get() - firstOffset + accumulatedDataLen);
+                        for (int i = 0; i < sliceInfo.getRowCount(); i += 1) {
+                            buf.put(idx, thisBuf.get() - firstOffset + accumulatedDataLen);
+                            idx += 1;
+                        }
+                        outputSliceInfo[tableIdx] = new SliceInfo(firstOffset, lastOffset - firstOffset);
+                        accumulatedDataLen += (int) outputSliceInfo[tableIdx].getRowCount();
                     }
-                    dataLen[tableIdx] = thisBuf.get((int) sliceInfo.getRowCount()) - firstOffset;
-                    accumulatedDataLen += dataLen[tableIdx];
-                }
 
-                currentOffsetOffsets[tableIdx] += thisBufferLen;
+                    currentOffsetOffsets[tableIdx] += thisBufferLen;
+                } else {
+                    outputSliceInfo[tableIdx] = new SliceInfo(0, 0);
+                }
             }
 
-            buf.put(accumulatedDataLen);
-
+            buf.put(idx, accumulatedDataLen);
+            outputTotalRowCount.set(accumulatedDataLen);
             return buffer;
         });
     }
 
-    private HostMemoryBuffer deserializeDataBuffer(int[] dataLen) {
-        long bufferSize = Arrays.stream(dataLen).sum();
-        return Arms.closeIfException(HostMemoryBuffer.allocate(bufferSize), buffer -> {
+    private HostMemoryBuffer deserializeDataBuffer(int[] dataLen, long totalDataLen) {
+        if (totalDataLen == 0) {
+            // See https://github.com/rapidsai/cudf/blob/f049d6c6a90dce032a1cb4d2a8c36f280dffc43f/java/src/main/java/ai/rapids/cudf/HostColumnVector.java#L239
+            return HostMemoryBuffer.allocate(1);
+        }
+        return Arms.closeIfException(HostMemoryBuffer.allocate(totalDataLen), buffer -> {
             long start = 0;
             for (int tableIdx = 0; tableIdx < tables.size(); tableIdx += 1) {
                 SerializedTable table = tables.get(tableIdx);
@@ -302,5 +389,19 @@ public class MultiTableDeserializer implements SchemaVisitor<HostColumnVector, L
         if (tables != null) {
             Arms.closeQuietly(tables);
         }
+    }
+
+    @Override
+    public String toString() {
+        return "MultiTableDeserializer{" +
+                "tables=" + tables +
+                ", currentValidityOffsets=" + Arrays.toString(currentValidityOffsets) +
+                ", currentOffsetOffsets=" + Arrays.toString(currentOffsetOffsets) +
+                ", currentDataOffset=" + Arrays.toString(currentDataOffset) +
+                ", sliceInfoStack=" + Arrays.toString(sliceInfoStack) +
+                ", totalRowCountStack=" + totalRowCountStack +
+                ", currentIdx=" + currentIdx +
+                ", outputSliceInfo=" + Arrays.toString(outputSliceInfo) +
+                '}';
     }
 }

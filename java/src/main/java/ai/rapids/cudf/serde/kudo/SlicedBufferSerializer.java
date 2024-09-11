@@ -51,7 +51,7 @@ class SlicedBufferSerializer implements SchemaWithColumnsVisitor<Long, Long> {
 
     @Override
     public Long preVisitList(Schema listType, HostColumnVectorCore col) {
-        SliceInfo parent = sliceInfos.peekLast();
+        SliceInfo parent = sliceInfos.getLast();
 
 
         long bytesCopied = 0;
@@ -73,7 +73,8 @@ class SlicedBufferSerializer implements SchemaWithColumnsVisitor<Long, Long> {
             throw new RuntimeException(e);
         }
 
-        long start = col.getOffsets().getInt(parent.offset * Integer.BYTES);
+        long start = col.getOffsets()
+                .getInt(parent.offset * Integer.BYTES);
         long end = col.getOffsets().getInt((parent.offset + parent.rowCount) * Integer.BYTES);
         long rowCount = end - start;
 
@@ -90,7 +91,7 @@ class SlicedBufferSerializer implements SchemaWithColumnsVisitor<Long, Long> {
 
     @Override
     public Long visit(Schema primitiveType, HostColumnVectorCore col) {
-        SliceInfo parent = sliceInfos.peekLast();
+        SliceInfo parent = sliceInfos.getLast();
         try {
             switch (bufferType) {
                 case VALIDITY:
