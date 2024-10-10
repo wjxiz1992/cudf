@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 
+import numpy as np
 import pytest
 
 import polars as pl
@@ -168,7 +169,11 @@ def test_groupby_nan_minmax_raises(op):
     "expr",
     [
         pl.lit(1).alias("value"),
-        pl.lit([[4, 5, 6]]).alias("value"),
+        pytest.param(
+            pl.lit([[4, 5, 6]]).alias("value"),
+            marks=pytest.mark.xfail(reason="Need to expose OtherScalar in rust IR"),
+        ),
+        pl.Series("value", [[4, 5, 6]], dtype=pl.List(pl.Int32)),
         pl.col("float") * (1 - pl.col("int")),
         [pl.lit(2).alias("value"), pl.col("float") * 2],
     ],
@@ -187,3 +192,24 @@ def test_groupby_literal_in_agg(df, key, expr):
 def test_groupby_unary_non_pointwise_raises(df, expr):
     q = df.group_by("key1").agg(expr)
     assert_ir_translation_raises(q, NotImplementedError)
+
+
+@pytest.mark.parametrize("nrows", [30, 300, 300_000])
+@pytest.mark.parametrize("nkeys", [1, 2, 4])
+def test_groupby_maintain_order_random(nrows, nkeys, with_nulls):
+    key_names = [f"key{key}" for key in range(nkeys)]
+    key_values = [np.random.randint(100, size=nrows) for _ in key_names]
+    value = np.random.randint(-100, 100, size=nrows)
+    df = pl.DataFrame(dict(zip(key_names, key_values, strict=True), value=value))
+    if with_nulls:
+        df = df.with_columns(
+            *(
+                pl.when(pl.col(name) == 1)
+                .then(None)
+                .otherwise(pl.col(name))
+                .alias(name)
+                for name in key_names
+            )
+        )
+    q = df.lazy().group_by(key_names, maintain_order=True).agg(pl.col("value").sum())
+    assert_gpu_result_equal(q)
