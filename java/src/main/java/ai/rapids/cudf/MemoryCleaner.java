@@ -332,7 +332,7 @@ public final class MemoryCleaner {
   /**
    * When debug is enabled holds information about inc and dec of ref count.
    */
-  public static final class RefCountDebugItem {
+  private static final class RefCountDebugItem {
     final StackTraceElement[] stackTrace;
     final long timeMs;
     final String op;
