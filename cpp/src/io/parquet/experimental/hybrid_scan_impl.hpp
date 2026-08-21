@@ -59,6 +59,13 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
                                    parquet_reader_options const& options);
 
   /**
+   * @brief Constructor that takes shared ownership of pre-parsed Parquet metadata
+   *
+   * @param metadata Shared, pre-parsed Parquet file metadata. Must not be null.
+   */
+  explicit hybrid_scan_reader_impl(std::shared_ptr<aggregate_reader_metadata> metadata);
+
+  /**
    * @copydoc cudf::io::parquet::experimental::hybrid_scan_multifile::parquet_metadatas
    */
   [[nodiscard]] std::vector<FileMetaData> parquet_metadatas() const;
