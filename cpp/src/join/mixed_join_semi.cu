@@ -138,8 +138,9 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
     cudf::detail::row::equality::preprocessed_table::create(right_conditional, stream, temp_mr);
   auto const row_comparator_conditional_right = cudf::detail::row::equality::two_table_comparator{
     preprocessed_right_condtional, preprocessed_right_condtional};
+  auto const right_conditional_nulls = cudf::nullate::DYNAMIC{cudf::has_nulls(right_conditional)};
   auto const equality_right_conditional =
-    row_comparator_conditional_right.equal_to<false>(right_nulls, compare_nulls);
+    row_comparator_conditional_right.equal_to<false>(right_conditional_nulls, compare_nulls);
 
   hash_set_type row_set{{static_cast<std::size_t>(right.num_rows())},
                         cudf::detail::CUCO_DESIRED_LOAD_FACTOR,

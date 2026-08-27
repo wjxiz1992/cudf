@@ -1838,6 +1838,66 @@ TYPED_TEST(MixedLeftSemiJoinTest, BasicNullEqualityUnequal)
                    cudf::null_equality::UNEQUAL);
 };
 
+using MixedLeftSemiJoinTest_int32 = MixedLeftSemiJoinTest<int32_t>;
+
+TEST_F(MixedLeftSemiJoinTest_int32, NullableConditionalWithNonNullableEqualityKeys)
+{
+  auto const left_conditional  = cudf::ast::column_reference(1, cudf::ast::table_reference::LEFT);
+  auto const right_conditional = cudf::ast::column_reference(1, cudf::ast::table_reference::RIGHT);
+  auto const predicate =
+    cudf::ast::operation(cudf::ast::ast_operator::NOT_EQUAL, left_conditional, right_conditional);
+
+  auto constexpr num_rows = cudf::size_type{30};
+  std::vector<int32_t> equality_keys(num_rows);
+
+  for (auto const null_first : {false, true}) {
+    std::vector<int32_t> conditional_values(num_rows);
+    std::vector<bool> conditional_validity(num_rows);
+    std::vector<cudf::size_type> expected_indices;
+
+    for (cudf::size_type i = 0; i < num_rows; ++i) {
+      auto const residue = i % 3;
+      equality_keys[i]   = i / 3;
+      if (null_first) {
+        conditional_values[i]   = residue == 0 ? 0 : residue - 1;
+        conditional_validity[i] = residue != 0;
+      } else {
+        conditional_values[i]   = residue == 2 ? 0 : residue;
+        conditional_validity[i] = residue != 2;
+      }
+      if (conditional_validity[i]) { expected_indices.push_back(i); }
+    }
+
+    cudf::test::fixed_width_column_wrapper<int32_t> left_keys(equality_keys.begin(),
+                                                              equality_keys.end());
+    cudf::test::fixed_width_column_wrapper<int32_t> right_keys(equality_keys.begin(),
+                                                               equality_keys.end());
+    cudf::test::fixed_width_column_wrapper<int32_t> left_conditionals(
+      conditional_values.begin(), conditional_values.end(), conditional_validity.begin());
+    cudf::test::fixed_width_column_wrapper<int32_t> right_conditionals(
+      conditional_values.begin(), conditional_values.end(), conditional_validity.begin());
+
+    auto const left_table  = cudf::table_view{{left_keys, left_conditionals}};
+    auto const right_table = cudf::table_view{{right_keys, right_conditionals}};
+    auto const result      = cudf::mixed_left_semi_join(left_table.select({0}),
+                                                   right_table.select({0}),
+                                                   left_table,
+                                                   right_table,
+                                                   predicate,
+                                                   cudf::null_equality::UNEQUAL);
+
+    std::vector<cudf::size_type> actual_indices;
+    actual_indices.reserve(result->size());
+    for (std::size_t i = 0; i < result->size(); ++i) {
+      actual_indices.push_back(result->element(i, cudf::get_default_stream()));
+    }
+    std::sort(actual_indices.begin(), actual_indices.end());
+
+    SCOPED_TRACE(null_first ? "null-first order" : "null-last order");
+    EXPECT_EQ(actual_indices, expected_indices);
+  }
+}
+
 TYPED_TEST(MixedLeftSemiJoinTest, AsymmetricEquality)
 {
   this->test({{0, 2, 1}, {3, 5, 4}, {10, 30, 20}},
