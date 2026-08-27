@@ -186,21 +186,11 @@ set(CUDF_CUDA_DEFINITIONS "")
 # override must therefore not exceed the architecture of any target GPU on which it will be linked.
 set(CUDF_LTO_ARCHITECTURE
     ""
-    CACHE STRING "LTO fragment architecture; empty selects the minimum supported by the toolkit"
+    CACHE STRING "LTO fragment architecture; empty selects the minimum configured architecture"
 )
 
-if(CUDF_LTO_ARCHITECTURE STREQUAL "")
-  foreach(architecture IN LISTS CMAKE_CUDA_ARCHITECTURES_ALL)
-    string(REGEX MATCH "^[0-9]+" architecture "${architecture}")
-    if(architecture AND (NOT CUDF_LTO_ARCHITECTURE OR architecture LESS CUDF_LTO_ARCHITECTURE))
-      set(CUDF_LTO_ARCHITECTURE "${architecture}")
-    endif()
-  endforeach()
-endif()
-
-if(NOT CUDF_LTO_ARCHITECTURE MATCHES "^[0-9]+$")
-  message(FATAL_ERROR "CUDF_LTO_ARCHITECTURE must be a numeric architecture")
-endif()
+include(cmake/Modules/SelectLtoArchitecture.cmake)
+cudf_select_lto_architecture(CUDF_LTO_ARCHITECTURE)
 message(VERBOSE "CUDF: Using ${CUDF_LTO_ARCHITECTURE} as the common LTO architecture")
 
 # For now, disable CMake's automatic module scanning for C++ files. There is an sccache bug in the
