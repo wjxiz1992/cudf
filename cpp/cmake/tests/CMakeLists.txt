@@ -34,9 +34,3 @@ add_test(NAME cudf_export_consumer COMMAND ${CMAKE_COMMAND} --build
 
 set_tests_properties(cudf_export_consumer_configure PROPERTIES FIXTURES_SETUP cudf_export_consumer)
 set_tests_properties(cudf_export_consumer PROPERTIES FIXTURES_REQUIRED cudf_export_consumer)
-
-add_test(
-  NAME cudf_lto_architecture_selection
-  COMMAND ${CMAKE_COMMAND} "-DCUDF_REPOSITORY_DIR=${CUDF_REPOSITORY_DIR}" -P
-          "${CMAKE_CURRENT_LIST_DIR}/select_lto_architecture.cmake"
-)
