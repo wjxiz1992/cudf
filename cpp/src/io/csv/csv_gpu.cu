@@ -288,7 +288,8 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
     }
     // Row offsets can span skipped comments or blank lines. Only a delimiter
     // starts another field; a record terminator must leave missing fields null.
-    if (next_delimiter >= row_end || *next_delimiter != opts.delimiter) { break; }
+    // TODO: Trim row_end at the record terminator instead (#24642).
+    if (not cudf::io::gpu::is_field_delimiter(next_delimiter, row_end, opts)) { break; }
     next_field  = next_delimiter + 1;
     field_start = next_field;
     col++;
@@ -419,7 +420,8 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
     }
     // Row offsets can span skipped comments or blank lines. Only a delimiter
     // starts another field; a record terminator must leave missing fields null.
-    if (next_delimiter >= row_end || *next_delimiter != options.delimiter) { break; }
+    // TODO: Trim row_end at the record terminator instead (#24642).
+    if (not cudf::io::gpu::is_field_delimiter(next_delimiter, row_end, options)) { break; }
     next_field  = next_delimiter + 1;
     field_start = next_field;
     ++col;

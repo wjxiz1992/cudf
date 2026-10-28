@@ -264,6 +264,16 @@ __device__ __inline__ char const* seek_field_end(char const* begin,
 }
 
 /**
+ * @brief Returns whether the field scan stopped at a delimiter within the record.
+ */
+__device__ __inline__ bool is_field_delimiter(char const* field_end,
+                                              char const* row_end,
+                                              parse_options_view const& opts)
+{
+  return field_end < row_end and *field_end == opts.delimiter;
+}
+
+/**
  * @brief Lexicographically compare digits in input against string
  * representing an integer
  *

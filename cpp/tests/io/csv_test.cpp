@@ -1445,7 +1445,7 @@ TEST_F(CsvReaderTest, BlanksAndComments)
 
 struct CsvShortRecordTest : public CsvReaderTest,
                             public testing::WithParamInterface<std::tuple<std::string, bool>> {
-  auto read(std::string const& buffer, std::vector<data_type> dtypes)
+  auto read(std::string const& buffer)
   {
     auto const& [separator, infer_types] = GetParam();
     auto builder                         = cudf::io::csv_reader_options::builder(
@@ -1455,7 +1455,7 @@ struct CsvShortRecordTest : public CsvReaderTest,
                      .comment('#')
                      .lineterminator(separator.back())
                      .keep_default_na(false);
-    if (!infer_types) { builder.dtypes(std::move(dtypes)); }
+    if (!infer_types) { builder.dtypes(std::vector<data_type>(3, dtype<cudf::string_view>())); }
     return cudf::io::read_csv(builder.build());
   }
 
@@ -1464,8 +1464,7 @@ struct CsvShortRecordTest : public CsvReaderTest,
     auto const& [separator, infer_types] = GetParam();
     std::string const buffer = "a,b,c" + separator + "1" + separator + skipped + "2,3,4" +
                                separator + "5" + separator + skipped + "6";
-    auto const str    = dtype<cudf::string_view>();
-    auto const result = read(buffer, {str, str, str});
+    auto const result = read(buffer);
     if (infer_types) {
       cudf::test::fixed_width_column_wrapper<int64_t> const a{1, 2, 5, 6};
       cudf::test::fixed_width_column_wrapper<int64_t> const b{{0, 3, 0, 0},
@@ -1514,8 +1513,7 @@ TEST_P(CsvShortRecordTest, QuotedTerminatorsAndComments)
   std::string const buffer = "a,b,c" + separator + "1,\"" + multiline + "\",7" + separator +
                              "#ignored,comment,99" + separator + "2,\"#é,quoted\"" + separator +
                              "#skipped,fields,123" + separator + "3,tail,8";
-  auto const str    = dtype<cudf::string_view>();
-  auto const result = read(buffer, {str, str, str});
+  auto const result = read(buffer);
   cudf::test::strings_column_wrapper const b{multiline, "#é,quoted", "tail"};
   if (infer_types) {
     cudf::test::fixed_width_column_wrapper<int64_t> const a{1, 2, 3};
@@ -1526,6 +1524,39 @@ TEST_P(CsvShortRecordTest, QuotedTerminatorsAndComments)
     cudf::test::strings_column_wrapper const c{{"7", "", "8"}, {true, false, true}};
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(table_view{{a, b, c}}, result.tbl->view());
   }
+}
+
+TEST_F(CsvReaderTest, ShortRecordBeforeCommentDelimWhitespace)
+{
+  std::string const buffer = "a b c\n1\n#x y z\n2  3   4\n";
+  auto const in_opts       = cudf::io::csv_reader_options::builder(
+                         cudf::io::source_info{cudf::host_span<std::byte const>{
+                           reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+                         .delim_whitespace(true)
+                         .comment('#')
+                         .build();
+  auto const result = cudf::io::read_csv(in_opts);
+
+  cudf::test::fixed_width_column_wrapper<int64_t> const a{1, 2};
+  cudf::test::fixed_width_column_wrapper<int64_t> const b{{0, 3}, {false, true}};
+  cudf::test::fixed_width_column_wrapper<int64_t> const c{{0, 4}, {false, true}};
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(table_view{{a, b, c}}, result.tbl->view());
+}
+
+TEST_F(CsvReaderTest, ShortRecordBeforeCommentUseCols)
+{
+  std::string const buffer = "a,b,c\n1\n#x,y,z\n2,3,4\n";
+  auto const in_opts       = cudf::io::csv_reader_options::builder(
+                         cudf::io::source_info{cudf::host_span<std::byte const>{
+                           reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+                         .comment('#')
+                         .use_cols_names({"a", "c"})
+                         .build();
+  auto const result = cudf::io::read_csv(in_opts);
+
+  cudf::test::fixed_width_column_wrapper<int64_t> const a{1, 2};
+  cudf::test::fixed_width_column_wrapper<int64_t> const c{{0, 4}, {false, true}};
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(table_view{{a, c}}, result.tbl->view());
 }
 
 TEST_F(CsvReaderTest, EmptyFile)
