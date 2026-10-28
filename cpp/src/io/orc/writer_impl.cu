@@ -9,6 +9,7 @@
  */
 
 #include "calendar.cuh"
+#include "decode_error.cuh"
 #include "io/comp/compression.hpp"
 #include "io/orc/orc_gpu.hpp"
 #include "io/statistics/column_statistics.cuh"
@@ -221,7 +222,7 @@ class orc_column_view {
 
   void add_child(uint32_t child_idx) { children.emplace_back(child_idx); }
 
-  auto const& view() const noexcept { return cudf_column; }
+  [[nodiscard]] auto const& view() const noexcept { return cudf_column; }
   auto type() const noexcept { return cudf_column.type(); }
   auto is_string() const noexcept { return cudf_column.type().id() == type_id::STRING; }
 
@@ -330,7 +331,6 @@ struct orc_table_view {
   std::vector<uint32_t> string_column_indices;
   cuda::device_buffer<uint32_t> d_string_column_indices;
   std::vector<rmm::device_uvector<int32_t>> rebased_dates;
-  std::vector<cuda::device_buffer<bitmask_type>> rebased_date_masks;
   // Keep selectively compacted input alive through statistics persistence and sink writes.
   std::vector<std::unique_ptr<column>> compacted_columns;
 
@@ -2153,13 +2153,44 @@ hostdevice_2dvector<rowgroup_rows> calculate_rowgroup_bounds(orc_table_view cons
 }
 
 /**
- * @brief Rebase DATE leaves before encoding and statistics, using the same device column views.
+ * @brief Compact sliced DATE inputs before allocating rebased data.
+ *
+ * Return both the owning columns and their table view so ownership remains explicit.
+ */
+[[nodiscard]] auto compact_legacy_date_inputs(table_view const& input,
+                                              orc_table_view const& orc_table,
+                                              host_2dspan<rowgroup_rows const> bounds,
+                                              cuda::stream_ref stream)
+{
+  std::vector<bool> compact(input.num_columns(), false);
+  size_type root_index = -1;
+  for (auto const& col : orc_table.columns) {
+    if (not col.is_child()) { ++root_index; }
+    if (col.orc_kind() != DATE) { continue; }
+    auto const begin = bounds[0][col.index()].begin;
+    auto const end   = bounds[bounds.size().first - 1][col.index()].end;
+    if (begin != end and (col.view().offset() != 0 or begin != 0 or end != col.size())) {
+      compact[root_index] = true;
+    }
+  }
+  std::vector<std::unique_ptr<column>> owned_columns;
+  std::vector<column_view> views(input.begin(), input.end());
+  for (size_type index = 0; index < input.num_columns(); ++index) {
+    if (not compact[index]) { continue; }
+    auto& compacted = owned_columns.emplace_back(std::make_unique<column>(
+      input.column(index), stream, cudf::get_current_device_resource_ref()));
+    views[index]    = compacted->view();
+  }
+  return std::pair{std::move(owned_columns), table_view{views}};
+}
+
+/**
+ * @brief Rebase DATE leaves before encoding and statistics, preserving their null masks.
  *
  * Rowgroup bounds restrict validation to rows actually written from sliced nested columns.
- * Pushdown masks also exclude values hidden by null ancestors. Owned buffers live in orc_table.
+ * Invalid dates share one device error flag, checked after processing all DATE leaves.
  */
 void rebase_date_columns(orc_table_view& orc_table,
-                         pushdown_null_masks const& pd_masks,
                          host_2dspan<rowgroup_rows const> bounds,
                          cuda::stream_ref stream)
 {
@@ -2168,6 +2199,7 @@ void rebase_date_columns(orc_table_view& orc_table,
                  "Legacy ORC calendar does not support TIMESTAMP columns");
   }
   if (orc_table.num_rows() == 0) { return; }
+  kernel_error error_code(stream);
   for (auto const& col : orc_table.columns) {
     if (col.orc_kind() != DATE) { continue; }
     auto const& view = col.view();
@@ -2176,51 +2208,39 @@ void rebase_date_columns(orc_table_view& orc_table,
     if (begin == end) { continue; }
     auto& data = orc_table.rebased_dates.emplace_back(
       static_cast<size_t>(view.offset()) + view.size(), stream);
-    auto const columns     = device_span<orc_column_device_view>{orc_table.d_columns};
-    auto const parent_mask = col.is_child() ? pd_masks.masks[col.parent_index()] : nullptr;
-    auto mask              = view.null_mask();
-    auto null_count        = view.null_count();
-    if (parent_mask != nullptr) {
-      // Statistics use the base column view, so they need the ancestor validity as well.
-      std::vector<bitmask_type const*> masks{parent_mask};
-      if (mask != nullptr) { masks.push_back(mask); }
-      std::vector<size_type> offsets(masks.size(), 0);
-      auto [combined, count] = cudf::detail::bitmask_and(masks,
-                                                         offsets,
-                                                         view.offset() + view.size(),
-                                                         stream,
-                                                         cudf::get_current_device_resource_ref());
-      mask       = orc_table.rebased_date_masks.emplace_back(std::move(combined)).data();
-      null_count = view.offset() == 0 ? count
-                                      : cudf::detail::null_count(
-                                          mask, view.offset(), view.offset() + view.size(), stream);
-    }
-    auto const invalid = thrust::transform_reduce(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-      cuda::counting_iterator<size_type>{begin},
-      cuda::counting_iterator<size_type>{end},
-      [columns, idx = col.index(), mask, out = data.data()] __device__(auto row) -> bool {
-        auto const& column = columns[idx];
-        if (not bit_value_or(mask, row + column.offset(), true)) {
-          out[row + column.offset()] = 0;
-          return false;
-        }
-        auto const original        = column.element<int32_t>(row);
-        auto const rebased         = rebase_days<true>(original);
-        out[row + column.offset()] = static_cast<int32_t>(rebased);
-        return not is_representable_date<true>(original, rebased);
-      },
-      false,
-      cuda::std::logical_or<bool>{});
-    CUDF_EXPECTS(not invalid, "DATE cannot be represented losslessly in the legacy ORC calendar");
+    auto const columns = device_span<orc_column_device_view>{orc_table.d_columns};
+    auto const mask    = view.null_mask();
+    thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                       cuda::counting_iterator<size_type>{begin},
+                       end - begin,
+                       [columns,
+                        idx = col.index(),
+                        mask,
+                        out          = data.data(),
+                        error_status = error_code.data()] __device__(auto row) {
+                         auto const& column = columns[idx];
+                         if (not bit_value_or(mask, row + column.offset(), true)) {
+                           out[row + column.offset()] = 0;
+                           return;
+                         }
+                         auto const original        = column.element<int32_t>(row);
+                         auto const rebased         = rebase_days<true>(original);
+                         out[row + column.offset()] = static_cast<int32_t>(rebased);
+                         if (not is_representable_date<true>(original, rebased)) {
+                           set_decode_error(error_status, decode_error::UNREPRESENTABLE_DATE);
+                         }
+                       });
     auto const rebased_view = column_device_view::create(
-      column_view{view.type(), view.size(), data.data(), mask, null_count, view.offset()}, stream);
+      column_view{view.type(), view.size(), data.data(), mask, view.null_count(), view.offset()},
+      stream);
     cudf::detail::device_single_thread(
       [columns, idx = col.index(), rebased = *rebased_view] __device__() {
         static_cast<column_device_view&>(columns[idx]) = rebased;
       },
       stream);
   }
+  CUDF_EXPECTS(error_code.value_sync(stream) == 0,
+               "DATE cannot be represented losslessly in the legacy ORC calendar");
 }
 
 // returns host vector of per-rowgroup sizes
@@ -2628,64 +2648,25 @@ auto convert_table_to_orc_data(table_view const& input,
                                data_sink const& out_sink,
                                cuda::stream_ref stream)
 {
-  std::vector<std::unique_ptr<column>> compacted_columns;
-  auto input_view = input;
-  if (calendar == CalendarKind::JULIAN_GREGORIAN and input.num_rows() != 0) {
-    // Top-level DATE offsets are already known. Compact them before constructing device
-    // views so the common chunked-write path only builds its views and rowgroup bounds once.
-    std::vector<column_view> views(input.begin(), input.end());
-    for (size_type index = 0; index < input.num_columns(); ++index) {
-      auto const& col = input.column(index);
-      if (col.type().id() != type_id::TIMESTAMP_DAYS or col.offset() == 0) { continue; }
-      auto& compacted = compacted_columns.emplace_back(
-        std::make_unique<column>(col, stream, cudf::get_current_device_resource_ref()));
-      views[index] = compacted->view();
-    }
-    if (not compacted_columns.empty()) { input_view = table_view{views}; }
-  }
-  auto input_tview = table_device_view::create(input_view, stream);
-
-  auto orc_table = make_orc_table_view(input_view, *input_tview, table_meta, stream);
-
+  auto input_tview     = table_device_view::create(input, stream);
+  auto orc_table       = make_orc_table_view(input, *input_tview, table_meta, stream);
   auto rowgroup_bounds = calculate_rowgroup_bounds(orc_table, row_index_stride, stream);
   if (calendar == CalendarKind::JULIAN_GREGORIAN and orc_table.num_rows() != 0) {
-    // A DATE view retains its backing offset/extent even when only a small nested slice is
-    // written. Compact just the affected top-level columns before allocating rebased buffers.
-    std::vector<bool> compact(input.num_columns(), false);
-    size_type root_index = -1;
-    for (auto const& col : orc_table.columns) {
-      if (not col.is_child()) { ++root_index; }
-      if (col.orc_kind() != DATE) { continue; }
-      auto const begin = rowgroup_bounds[0][col.index()].begin;
-      auto const end   = rowgroup_bounds[rowgroup_bounds.size().first - 1][col.index()].end;
-      if (begin != end and (col.view().offset() != 0 or begin != 0 or end != col.size())) {
-        compact[root_index] = true;
-      }
-    }
-    if (std::any_of(compact.begin(), compact.end(), [](bool value) { return value; })) {
-      std::vector<column_view> views;
-      for (size_type index = 0; index < input.num_columns(); ++index) {
-        if (compact[index]) {
-          auto& compacted = compacted_columns.emplace_back(std::make_unique<column>(
-            input_view.column(index), stream, cudf::get_current_device_resource_ref()));
-          views.push_back(compacted->view());
-        } else {
-          views.push_back(input_view.column(index));
-        }
-      }
-      table_view compacted_input{views};
+    auto [compacted_columns, compacted_input] =
+      compact_legacy_date_inputs(input, orc_table, rowgroup_bounds.host_view(), stream);
+    if (not compacted_columns.empty()) {
       input_tview     = table_device_view::create(compacted_input, stream);
       orc_table       = make_orc_table_view(compacted_input, *input_tview, table_meta, stream);
       rowgroup_bounds = calculate_rowgroup_bounds(orc_table, row_index_stride, stream);
     }
+    orc_table.compacted_columns = std::move(compacted_columns);
   }
-  orc_table.compacted_columns = std::move(compacted_columns);
 
   // This is unused but it holds memory buffers for later access thus needs to be kept alive.
   [[maybe_unused]] auto const pd_masks = init_pushdown_null_masks(orc_table, stream);
 
   if (calendar == CalendarKind::JULIAN_GREGORIAN) {
-    rebase_date_columns(orc_table, pd_masks, rowgroup_bounds.host_view(), stream);
+    rebase_date_columns(orc_table, rowgroup_bounds.host_view(), stream);
   }
 
   [[maybe_unused]] auto const rg_char_counts_data =

@@ -173,7 +173,10 @@ class orc_reader_options {
    * @brief Whether explicitly marked hybrid DATE values are converted to proleptic Gregorian.
    * @return Whether DATE conversion is enabled
    */
-  [[nodiscard]] bool get_convert_dates_to_proleptic() const { return _convert_dates_to_proleptic; }
+  [[nodiscard]] bool is_enabled_convert_dates_to_proleptic() const
+  {
+    return _convert_dates_to_proleptic;
+  }
 
   /**
    * @brief Returns timestamp type to which timestamp column will be cast.
@@ -286,14 +289,12 @@ class orc_reader_options {
    * @brief Convert DATE values from explicitly marked JULIAN_GREGORIAN files to proleptic
    * Gregorian.
    *
-   * Disabled by default to preserve raw epoch-day reads used by callers that rebase themselves.
-   * Missing and UNKNOWN calendar fields are left unchanged. TIMESTAMP columns are unchanged.
-   * Conversion precedes numpy dtype promotion and applies recursively to nested DATE columns.
-   * Julian-only leap days and dates outside the int32 proleptic domain cause a read error.
+   * Disabled by default. Only DATE columns, including nested ones, are converted. Dates with no
+   * proleptic Gregorian equivalent cause a read error. Conversion precedes numpy dtype promotion.
    *
    * @param convert Whether to convert explicitly marked hybrid DATE values
    */
-  void set_convert_dates_to_proleptic(bool convert) { _convert_dates_to_proleptic = convert; }
+  void enable_convert_dates_to_proleptic(bool convert) { _convert_dates_to_proleptic = convert; }
 
   /**
    * @brief Sets timestamp type to which timestamp column will be cast.
@@ -422,12 +423,12 @@ class orc_reader_options_builder {
   }
 
   /**
-   * @copydoc orc_reader_options::set_convert_dates_to_proleptic
+   * @copydoc orc_reader_options::enable_convert_dates_to_proleptic
    * @return this for chaining
    */
   orc_reader_options_builder& convert_dates_to_proleptic(bool convert)
   {
-    options.set_convert_dates_to_proleptic(convert);
+    options.enable_convert_dates_to_proleptic(convert);
     return *this;
   }
 

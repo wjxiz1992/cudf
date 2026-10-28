@@ -367,7 +367,8 @@ class orc_metadata {
    * @brief Returns the calendar recorded in the ORC footer.
    *
    * A missing value means the writer did not specify a calendar. This accessor does not
-   * convert values. See `orc_reader_options::set_convert_dates_to_proleptic` for DATE conversion.
+   * convert values. See `orc_reader_options::enable_convert_dates_to_proleptic` for DATE
+   * conversion.
    *
    * @return Calendar kind, or `std::nullopt` if the footer has no calendar field
    */

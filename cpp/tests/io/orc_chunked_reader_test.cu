@@ -195,11 +195,12 @@ void expect_selected_nested_empty_struct_chunked_round_trip(
   expect_selected_nested_empty_struct_table(expected->view(), chunk.tbl->view());
 }
 
-void record_two_decode_errors(cudf::size_type* status, cuda::stream_ref stream)
+void record_two_decode_errors(cudf::io::kernel_error::pointer status, cuda::stream_ref stream)
 {
   cudf::detail::device_single_thread(
     [status] __device__ {
-      cudf::io::orc::detail::set_decode_error(status);
+      cudf::io::orc::detail::set_decode_error(
+        status, cudf::io::orc::detail::decode_error::UNREPRESENTABLE_DATE);
       cudf::io::orc::detail::set_decode_error(status);
     },
     stream);
@@ -212,11 +213,12 @@ struct OrcChunkedReaderTest : public cudf::test::BaseFixture {};
 TEST_F(OrcChunkedReaderTest, CalendarDecodeErrorDoesNotWrap)
 {
   auto const stream = cudf::get_default_stream();
-  for (auto initial : {cudf::size_type{0}, cudf::size_type{-2}}) {
-    rmm::device_scalar<cudf::size_type> status{initial, stream};
-    // -2 represents the state after 2^32 - 2 failures. Two more increments used to clear it.
+  using value_type  = cudf::io::kernel_error::value_type;
+  for (auto initial : {value_type{0}, value_type{UINT32_MAX - 1}}) {
+    rmm::device_scalar<value_type> status{initial, stream};
+    // 2^32 - 2 followed by two more increments used to wrap back to zero.
     record_two_decode_errors(status.data(), stream);
-    EXPECT_NE(status.value(stream), 0);
+    EXPECT_EQ(status.value(stream), initial | value_type{3});
   }
 }
 
