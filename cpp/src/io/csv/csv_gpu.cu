@@ -190,6 +190,10 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
     field_start = cudf::io::gpu::skip_leading_delimiter_run(field_start, row_end, opts);
     if (field_start >= row_end) break;
     auto next_delimiter = cudf::io::gpu::seek_field_end(field_start, row_end, opts);
+    if (opts.multi_delimiter and next_delimiter == field_start and
+        not cudf::io::gpu::is_field_delimiter(next_delimiter, row_end, opts)) {
+      break;
+    }
 
     // Checking if this is a column that the user wants --- user can filter columns
     if (column_flags[col] & column_parse::inferred) {
@@ -347,6 +351,10 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
     if (field_start >= row_end) break;
     next_field          = field_start;
     auto next_delimiter = cudf::io::gpu::seek_field_end(field_start, row_end, options);
+    if (options.multi_delimiter and next_delimiter == field_start and
+        not cudf::io::gpu::is_field_delimiter(next_delimiter, row_end, options)) {
+      break;
+    }
 
     if (column_flags[col] & column_parse::enabled) {
       // check if the entire field is a NaN string - consistent with pandas

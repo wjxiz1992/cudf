@@ -1528,18 +1528,66 @@ TEST_P(CsvShortRecordTest, QuotedTerminatorsAndComments)
 
 TEST_F(CsvReaderTest, ShortRecordBeforeCommentDelimWhitespace)
 {
-  std::string const buffer = "a b c\n1\n#x y z\n2  3   4\n";
-  auto const in_opts       = cudf::io::csv_reader_options::builder(
+  for (auto const& trailing_space : {std::string{""}, std::string{" "}, std::string{"   "}}) {
+    for (bool infer_types : {false, true}) {
+      SCOPED_TRACE(trailing_space);
+      SCOPED_TRACE(infer_types);
+      std::string const buffer = "a b c\n1" + trailing_space + "\n#x y z\n2  3   4\n";
+      auto builder             = cudf::io::csv_reader_options::builder(
+                       cudf::io::source_info{cudf::host_span<std::byte const>{
+                         reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+                       .delim_whitespace(true)
+                       .comment('#')
+                       .keep_default_na(false);
+      if (!infer_types) { builder.dtypes(std::vector<data_type>(3, dtype<cudf::string_view>())); }
+      auto const result = cudf::io::read_csv(builder.build());
+
+      if (infer_types) {
+        cudf::test::fixed_width_column_wrapper<int64_t> const a{1, 2};
+        cudf::test::fixed_width_column_wrapper<int64_t> const b{{0, 3}, {false, true}};
+        cudf::test::fixed_width_column_wrapper<int64_t> const c{{0, 4}, {false, true}};
+        CUDF_TEST_EXPECT_TABLES_EQUIVALENT(table_view{{a, b, c}}, result.tbl->view());
+      } else {
+        cudf::test::strings_column_wrapper const a{"1", "2"};
+        cudf::test::strings_column_wrapper const b({"", "3"}, {false, true});
+        cudf::test::strings_column_wrapper const c({"", "4"}, {false, true});
+        CUDF_TEST_EXPECT_TABLES_EQUIVALENT(table_view{{a, b, c}}, result.tbl->view());
+      }
+    }
+  }
+}
+
+TEST_F(CsvReaderTest, ShortRecordAllNullColumn)
+{
+  // Missing fields and explicit NA tokens must infer the same all-null type.
+  for (auto const& middle_row : {std::string{"2"}, std::string{"2,NA"}}) {
+    SCOPED_TRACE(middle_row);
+    std::string const buffer = "a,b\n1,NA\n" + middle_row + "\n#ignored\n3,NA\n";
+    auto const result =
+      cudf::io::read_csv(cudf::io::csv_reader_options::builder(
+                           cudf::io::source_info{cudf::host_span<std::byte const>{
+                             reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+                           .comment('#'));
+    cudf::test::fixed_width_column_wrapper<int64_t> const a{1, 2, 3};
+    cudf::test::fixed_width_column_wrapper<int8_t> const b{{0, 0, 0},
+                                                           cudf::test::iterators::all_nulls()};
+    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(table_view{{a, b}}, result.tbl->view());
+  }
+}
+
+TEST_F(CsvReaderTest, ShortRecordExplicitEmptyField)
+{
+  std::string const buffer = "a,b,c\n1,\n#ignored,comment,fields\n2,3,4\n";
+  auto const result =
+    cudf::io::read_csv(cudf::io::csv_reader_options::builder(
                          cudf::io::source_info{cudf::host_span<std::byte const>{
                            reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
-                         .delim_whitespace(true)
                          .comment('#')
-                         .build();
-  auto const result = cudf::io::read_csv(in_opts);
-
-  cudf::test::fixed_width_column_wrapper<int64_t> const a{1, 2};
-  cudf::test::fixed_width_column_wrapper<int64_t> const b{{0, 3}, {false, true}};
-  cudf::test::fixed_width_column_wrapper<int64_t> const c{{0, 4}, {false, true}};
+                         .keep_default_na(false)
+                         .dtypes(std::vector<data_type>(3, dtype<cudf::string_view>())));
+  cudf::test::strings_column_wrapper const a{"1", "2"};
+  cudf::test::strings_column_wrapper const b{"", "3"};
+  cudf::test::strings_column_wrapper const c({"", "4"}, {false, true});
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(table_view{{a, b, c}}, result.tbl->view());
 }
 
