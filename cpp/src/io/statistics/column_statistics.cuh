@@ -151,11 +151,7 @@ struct calculate_group_statistics_functor {
         }
       }
     }
-    using count_reduce = cub::BlockReduce<uint32_t, block_size>;
-    chunk.non_nulls    = count_reduce(storage.template get<uint32_t>()).Sum(chunk.non_nulls);
-    __syncthreads();
-    chunk.null_count = count_reduce(storage.template get<uint32_t>()).Sum(chunk.null_count);
-    __syncthreads();
+    chunk = block_reduce(chunk, storage);
 
     if (t == 0) { s.ck = get_untyped_chunk(chunk); }
   }
